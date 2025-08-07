@@ -36,7 +36,7 @@ class BasicVaRTransformer(nn.Module):
     def __init__(self, input_dim, model_dim=64, num_heads=4, num_layers=2, dropout=0.1):
         super().__init__()
         self.input_linear = nn.Linear(input_dim, model_dim)
-
+        self.pos_encoder = PositionalEncoding(model_dim)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=model_dim,
             nhead=num_heads,
@@ -49,6 +49,7 @@ class BasicVaRTransformer(nn.Module):
 
     def forward(self, x):
         x = self.input_linear(x)
+        x = self.pos_encoder(x)
         x = self.transformer(x)
         x = x[:, -1]  # Use the last time step
         out = self.output_layer(x)
@@ -85,107 +86,73 @@ def create_sequences_with_overlap(X, y, seq_len=21, overlap=0.5):
     return np.array(X_seq), np.array(y_seq)
 
 
-# def evaluate_expanding_window_model(model, X, y, test_start_idx, max_seq_len=100):
-#     """
-#     Evaluate model using expanding window approach similar to GARCH.
-#     """
-#     model.eval()
-#     predicted_var = []
-#     predicted_es = []
-
-#     with torch.no_grad():
-#         for i in range(test_start_idx, len(X)):
-#             # Use all data up to current point
-#             current_data = X[: i + 1]
-
-#             # Pad if necessary
-#             if len(current_data) > max_seq_len:
-#                 current_data = current_data[-max_seq_len:]
-#             else:
-#                 padding = np.zeros(
-#                     (max_seq_len - len(current_data), current_data.shape[1])
-#                 )
-#                 current_data = np.vstack([padding, current_data])
-
-#             # Make prediction
-#             X_tensor = torch.tensor(
-#                 current_data.reshape(1, -1, current_data.shape[1]), dtype=torch.float32
-#             )
-#             prediction = model(X_tensor)
-
-#             predicted_var.append(prediction[0, 0].item())
-#             predicted_es.append(prediction[0, 1].item())
-
-#     return np.array(predicted_var), np.array(predicted_es)
-
-
 # Add ES calibration function
-# def calibrate_es_post_training(model, X_tensor, y_tensor, alpha=0.05):
-#     """Post-training ES calibration to improve tail risk estimates"""
-#     model.eval()
-#     with torch.no_grad():
-#         predictions = model(X_tensor).cpu().numpy()
+def calibrate_es_post_training(model, X_tensor, y_tensor, alpha=0.05):
+    """Post-training ES calibration to improve tail risk estimates"""
+    model.eval()
+    with torch.no_grad():
+        predictions = model(X_tensor).cpu().numpy()
 
-#     y_true = y_tensor.cpu().numpy()
-#     var_pred = predictions[:, 0]
+    y_true = y_tensor.cpu().numpy()
+    var_pred = predictions[:, 0]
 
-#     # Find actual breaches
-#     breaches = y_true <= var_pred
-#     actual_es = y_true[breaches].mean() if breaches.sum() > 0 else var_pred.mean()
+    # Find actual breaches
+    breaches = y_true <= var_pred
+    actual_es = y_true[breaches].mean() if breaches.sum() > 0 else var_pred.mean()
 
-#     # Calculate empirical ES from historical data
-#     empirical_var = np.quantile(y_true, alpha)
-#     empirical_es = y_true[y_true <= empirical_var].mean()
+    # Calculate empirical ES from historical data
+    empirical_var = np.quantile(y_true, alpha)
+    empirical_es = y_true[y_true <= empirical_var].mean()
 
-#     # ES scaling factor based on historical underestimation
-#     if actual_es != 0:
-#         es_scaling_factor = max(1.2, empirical_es / actual_es)  # Minimum 20% adjustment
-#         print(f"ES calibration factor: {es_scaling_factor:.4f}")
-#         return es_scaling_factor
-#     else:
-#         return 1.0
+    # ES scaling factor based on historical underestimation
+    if actual_es != 0:
+        es_scaling_factor = max(1.2, empirical_es / actual_es)  # Minimum 20% adjustment
+        print(f"ES calibration factor: {es_scaling_factor:.4f}")
+        return es_scaling_factor
+    else:
+        return 1.0
 
 
-# def calibrate_var_post_training(model, X_tensor, y_tensor, alpha=0.05):
-#     """Post-training VaR calibration to improve hit rate"""
-#     model.eval()
-#     with torch.no_grad():
-#         predictions = model(X_tensor).cpu().numpy()
+def calibrate_var_post_training(model, X_tensor, y_tensor, alpha=0.05):
+    """Post-training VaR calibration to improve hit rate"""
+    model.eval()
+    with torch.no_grad():
+        predictions = model(X_tensor).cpu().numpy()
 
-#     y_true = y_tensor.cpu().numpy()
-#     var_pred = predictions[:, 0]
+    y_true = y_tensor.cpu().numpy()
+    var_pred = predictions[:, 0]
 
-#     # Calculate current hit rate
-#     hits = (y_true <= var_pred).astype(int)
-#     current_hit_rate = hits.mean()
+    # Calculate current hit rate
+    hits = (y_true <= var_pred).astype(int)
+    current_hit_rate = hits.mean()
 
-#     print(f"Current hit rate: {current_hit_rate:.4f} (Target: {alpha})")
+    print(f"Current hit rate: {current_hit_rate:.4f} (Target: {alpha})")
 
-#     # Calculate adjustment factor
-#     if current_hit_rate > 0:
-#         # If hit rate is too high, make VaR less negative (less conservative)
-#         if current_hit_rate > alpha * 1.5:  # If more than 50% above target
-#             adjustment_factor = 0.8  # Make VaR 20% less negative
-#             print(
-#                 f"VaR adjustment factor: {adjustment_factor:.4f} (making less conservative)"
-#             )
-#         elif current_hit_rate > alpha * 1.2:  # If more than 20% above target
-#             adjustment_factor = 0.9  # Make VaR 10% less negative
-#             print(
-#                 f"VaR adjustment factor: {adjustment_factor:.4f} (making less conservative)"
-#             )
-#         else:
-#             adjustment_factor = 1.0
-#             print(
-#                 f"VaR adjustment factor: {adjustment_factor:.4f} (no adjustment needed)"
-#             )
-#     else:
-#         adjustment_factor = 1.0
-#         print(
-#             f"VaR adjustment factor: {adjustment_factor:.4f} (no breaches to calibrate)"
-#         )
+    # Calculate adjustment factor
+    if current_hit_rate > 0:
+        # If hit rate is too high, make VaR less negative (less conservative)
+        if current_hit_rate > alpha * 1.5:  # If more than 50% above target
+            adjustment_factor = 0.8  # Make VaR 20% less negative
+            print(
+                f"VaR adjustment factor: {adjustment_factor:.4f} (making less conservative)"
+            )
+        elif current_hit_rate > alpha * 1.2:  # If more than 20% above target
+            adjustment_factor = 0.9  # Make VaR 10% less negative
+            print(
+                f"VaR adjustment factor: {adjustment_factor:.4f} (making less conservative)"
+            )
+        else:
+            adjustment_factor = 1.0
+            print(
+                f"VaR adjustment factor: {adjustment_factor:.4f} (no adjustment needed)"
+            )
+    else:
+        adjustment_factor = 1.0
+        print(
+            f"VaR adjustment factor: {adjustment_factor:.4f} (no breaches to calibrate)"
+        )
 
-#     return adjustment_factor
+    return adjustment_factor
 
 
 def comprehensive_evaluation(
@@ -533,18 +500,18 @@ def hybrid_approach_main():
     df["return"] = df["close"].pct_change()
     df["squared_return"] = df["return"] ** 2
     df["target_return"] = df["return"].shift(-1)
-    df["log_return"] = np.log(df["close"] / df["close"].shift(1))
-    df["return_ma"] = df["return"].rolling(window=5).mean()
-    df["vol_ma"] = df["return"].rolling(window=21).std()
+    # df["log_return"] = np.log(df["close"] / df["close"].shift(1))
+    # df["return_ma"] = df["return"].rolling(window=5).mean()
+    # df["vol_ma"] = df["return"].rolling(window=21).std()
 
     df.dropna(inplace=True)
 
     features = [
-        "return",
+        # "return",
         "squared_return",
-        "log_return",
-        "return_ma",
-        "vol_ma",
+        # "log_return",
+        # "return_ma",
+        # "vol_ma",
         # "gk_vol_1d",
         # "gk_vol_21d",
         # "weighted_tavg",
@@ -589,16 +556,16 @@ def hybrid_approach_main():
     y_tensor_cal = torch.tensor(y_seq_cal, dtype=torch.float32)
 
     # # Apply calibration
-    # var_adjustment_factor = calibrate_var_post_training(
-    #     model, X_tensor_cal, y_tensor_cal
-    # )
-    # es_calibration_factor = calibrate_es_post_training(
-    #     model, X_tensor_cal, y_tensor_cal
-    # )
+    var_adjustment_factor = calibrate_var_post_training(
+        model, X_tensor_cal, y_tensor_cal
+    )
+    es_calibration_factor = calibrate_es_post_training(
+        model, X_tensor_cal, y_tensor_cal
+    )
 
     # Apply calibration factors
-    # predicted_var = predicted_var * var_adjustment_factor
-    # predicted_es = predicted_es * es_calibration_factor
+    predicted_var = predicted_var * var_adjustment_factor
+    predicted_es = predicted_es * es_calibration_factor
 
     # Step 4: Evaluate results
     print("\n4. Evaluating hybrid approach results...")
@@ -635,8 +602,8 @@ def hybrid_approach_main():
         print(f"Average Actual Return under VaR: {actual_es:.4f}")
         print(f"Average Predicted ES: {predicted_es_breaches:.4f}")
 
-    # print(f"VaR Calibration Factor: {var_adjustment_factor:.4f}")
-    # print(f"ES Calibration Factor: {es_calibration_factor:.4f}")
+    print(f"VaR Calibration Factor: {var_adjustment_factor:.4f}")
+    print(f"ES Calibration Factor: {es_calibration_factor:.4f}")
     print("=" * 60)
 
     # Plot results
