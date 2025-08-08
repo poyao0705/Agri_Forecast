@@ -508,25 +508,20 @@ def hybrid_approach_main():
     df["return"] = df["close"].pct_change()
     df["squared_return"] = df["return"] ** 2
     df["target_return"] = df["return"].shift(-1)  # Predict tomorrow's return
-    # df["log_return"] = np.log(df["close"] / df["close"].shift(1))
-    # df["return_ma"] = df["return"].rolling(window=5).mean()
-    # df["vol_ma"] = df["return"].rolling(window=21).std()
+
+    # Note: Using Garman-Klass volatility from the data file
+    # If you want to calculate return-based volatility instead, uncomment these:
+    # df["vol_21d"] = df["return"].rolling(window=21).std()  # 21-day rolling volatility
+    # df["vol_ewm_21d"] = df["return"].ewm(span=21).std()  # Exponentially weighted volatility
+    # df["abs_return"] = np.abs(df["return"])  # Absolute return
 
     df.dropna(inplace=True)
 
     features = [
         "return",
         "squared_return",
-        # "log_return",
-        # "return_ma",
-        # "vol_ma",
         "gk_vol_1d",
         "gk_vol_21d",
-        # "weighted_tavg",
-        # "weighted_prcp",
-        # "Fed_Rate",
-        # "GDP",
-        # "CPI",
     ]
 
     X = df[features].values
