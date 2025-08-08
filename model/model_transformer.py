@@ -33,7 +33,7 @@ class PositionalEncoding(nn.Module):
 
 
 class BasicVaRTransformer(nn.Module):
-    def __init__(self, input_dim, model_dim=64, num_heads=4, num_layers=2, dropout=0.1):
+    def __init__(self, input_dim, model_dim=32, num_heads=2, num_layers=1, dropout=0.1):
         super().__init__()
         self.input_linear = nn.Linear(input_dim, model_dim)
         self.pos_encoder = PositionalEncoding(model_dim)
@@ -45,17 +45,28 @@ class BasicVaRTransformer(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        self.output_layer = nn.Linear(model_dim, 2)  # Output: [VaR, ES]
+        # More sophisticated output layer
+        self.output_layer = nn.Sequential(
+            nn.Linear(model_dim, model_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(model_dim, 2),
+        )
 
     def forward(self, x):
         x = self.input_linear(x)
         x = self.pos_encoder(x)
         x = self.transformer(x)
         x = x[:, -1]  # Use the last time step
-        out = self.output_layer(x)
+        raw_output = self.output_layer(x)
 
-        var = -torch.exp(out[:, 0])  # Ensure VaR is negative
-        es = var - torch.exp(out[:, 1])  # ES is more negative than VaR
+        # Apply clamping to prevent extreme values
+        raw_output = torch.clamp(raw_output, -10, 10)
+
+        # Use scale parameter for better calibration
+        scale = 0.03  # More conservative scale for transformer
+        var = -scale * torch.exp(torch.clamp(raw_output[:, 0], -3, 3))
+        es = var - scale * torch.exp(torch.clamp(raw_output[:, 1], -3, 3))
 
         return torch.stack([var, es], dim=1)
 
@@ -507,18 +518,10 @@ def hybrid_approach_main():
     df.dropna(inplace=True)
 
     features = [
-        # "return",
+        "return",
         "squared_return",
-        # "log_return",
-        # "return_ma",
-        # "vol_ma",
-        # "gk_vol_1d",
-        # "gk_vol_21d",
-        # "weighted_tavg",
-        # "weighted_prcp",
-        # "Fed_Rate",
-        # "GDP",
-        # "CPI",
+        "gk_vol_1d",
+        "gk_vol_21d",
     ]
 
     X = df[features].values
