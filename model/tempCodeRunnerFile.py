@@ -1,1 +1,1 @@
-self.output_lay
+clamp

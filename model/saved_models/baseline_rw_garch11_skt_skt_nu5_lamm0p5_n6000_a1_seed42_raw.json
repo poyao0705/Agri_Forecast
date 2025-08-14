@@ -1,0 +1,18 @@
+{
+  "model_name": "Baseline[rw]_garch11_skt_skt_nu5_lamm0p5_n6000_a1_seed42",
+  "config": {
+    "alpha": 0.01,
+    "method": "rw",
+    "init_window": 2000,
+    "calibrate": false
+  },
+  "avg_fz0_loss": -1.8073442252809868,
+  "hit_rate": 0.02,
+  "kupiec_LR": 7.044515237630264,
+  "kupiec_pof_p": 0.007950834043592647,
+  "ind_LR": 0.6943167778172494,
+  "chr_ind_p": 0.4046999541769475,
+  "cc_LR": 7.738832015447514,
+  "chr_cc_p": 0.02087055410938854,
+  "n": 900
+}
