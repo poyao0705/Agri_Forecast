@@ -104,8 +104,8 @@ def run_transformer(
 
     # The pipeline already saves the file with the correct name
     # We just need to return the path to the saved file
-    # The filename will be: transformer_{tag}_calibrated.npz if calibrate=True, or transformer_{tag}.npz if calibrate=False
-    cal_suffix = "_calibrated" if calibrate else ""
+    # The filename will be: transformer_{tag}_calibrated.npz if calibrate=True, or transformer_{tag}_raw.npz if calibrate=False
+    cal_suffix = "_calibrated" if calibrate else "_raw"
     npz_path = os.path.join(out_dir, f"transformer_{tag}{cal_suffix}.npz")
 
     return metrics, npz_path, model
@@ -131,8 +131,8 @@ def run_garch(
 
     # The pipeline already saves the file with the correct name
     # We just need to return the path to the saved file
-    # The filename will be: garch_{tag}_calibrated.npz if calibrate=True, or garch_{tag}.npz if calibrate=False
-    cal_suffix = "_calibrated" if calibrate else ""
+    # The filename will be: garch_{tag}_calibrated.npz if calibrate=True, or garch_{tag}_raw.npz if calibrate=False
+    cal_suffix = "_calibrated" if calibrate else "_raw"
     npz_path = os.path.join(out_dir, f"garch_{tag}{cal_suffix}.npz")
 
     return metrics, npz_path, model
@@ -158,8 +158,8 @@ def run_baseline(
 
     # The pipeline already saves the file with the correct name
     # We just need to return the path to the saved file
-    # The filename will be: baseline_{tag}_calibrated.npz if calibrate=True, or baseline_{tag}.npz if calibrate=False
-    cal_suffix = "_calibrated" if calibrate else ""
+    # The filename will be: baseline_{tag}_calibrated.npz if calibrate=True, or baseline_{tag}_raw.npz if calibrate=False
+    cal_suffix = "_calibrated" if calibrate else "_raw"
     npz_path = os.path.join(out_dir, f"baseline_{tag}{cal_suffix}.npz")
 
     return metrics, npz_path, model
