@@ -1,1 +1,9 @@
 venv/
+artifacts/
+data/interim/
+data/processed/
+figures/
+reports/
+results/
+pycache/
+__pycache__/

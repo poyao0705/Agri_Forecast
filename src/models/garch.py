@@ -1,0 +1,74 @@
+# src/models/garch.py
+# GARCH(1,1)-t model implementation.
+
+from typing import Tuple, Any, Dict
+import numpy as np
+import pandas as pd
+
+# Use the baseline module you already have
+from src.baselines.baseline_classic_var_es import pipeline as baseline_pipeline
+
+
+def pipeline(
+    csv_path: str,
+    alpha: float,
+    calibrate: bool,
+    feature_parity: bool,
+    run_tag: str,
+    out_dir: str,
+    fig_dir: str,
+) -> Tuple[Any, Dict[str, Any], Tuple[np.ndarray, np.ndarray, np.ndarray, float]]:
+    """
+    GARCH(1,1)-t model implementation.
+    Returns: (model_stub, metrics, (v_eval, e_eval, y_aligned, fz0_mean))
+    """
+    # Run your existing baseline in "garch_t" mode
+    # Use expanding window starting from 50% split to match transformer
+    df = pd.read_csv(csv_path)
+    n_total = len(df)
+    init_window = int(0.5 * n_total)  # Match transformer's 50/50 split
+
+    model_name, metrics, (v_eval, e_eval, y_index, fz0) = baseline_pipeline(
+        csv_path=csv_path,
+        method="garch_t",
+        alpha=alpha,
+        init_window=init_window,  # Use 50% split instead of 2000
+        calibrate=calibrate,
+        run_tag=run_tag,
+        out_dir=out_dir,
+        show_progress=False,  # Disable verbose progress printing
+        include_train_history=False,  # keep test-only alignment
+    )
+
+    # The baseline returns y_index (timestamps), but we need the actual return values
+    # Calculate returns from close prices (same as baseline)
+    px = pd.Series(df["close"].astype(float))
+    returns = np.log(px / px.shift(1)).dropna().values
+
+    # Get the actual return values corresponding to the test period
+    # The GARCH baseline uses expanding window from init_window to n-1
+    # So test period is from init_window+1 to n-1 (since we predict t+1 at time t)
+    y_aligned = returns[init_window + 1 : init_window + 1 + len(v_eval)]
+
+    # Calculate mean FZ0 loss
+    fz0_mean = float(np.mean(fz0))
+
+    # Update the returned metrics with our custom fields
+    metrics.update(
+        {
+            "title": f"GARCH ({'parity' if feature_parity else 'full'}, {'calibrated' if calibrate else 'raw'})",
+            "feature_parity": feature_parity,
+            "features": (
+                ["x_cov"]
+                if feature_parity
+                else ["ewma94", "ewma97", "x_cov", "neg_xcov", "neg_ret"]
+            ),
+            "model_desc": "GARCH(1,1) with Student-t innovations",
+            "model_name": "GARCH",
+            # Hand back the series so your DM code can consume it
+            "loss_series": np.asarray(fz0),
+        }
+    )
+
+    # We don't need to return a model object; keep None to match your runner style
+    return None, metrics, (v_eval, e_eval, y_aligned, fz0)
