@@ -564,11 +564,16 @@ def main():
     if len(seeds) > 1 and all_seed_tables:
         agg_all = pd.concat(all_seed_tables, ignore_index=True)
         print("\n== ACROSS-SEEDS (and ALPHAS) SUMMARY ==")
-        print(
+
+        # This should be safe since we're only selecting numeric columns
+        summary_df = (
             agg_all.groupby(["alpha", "model"])[["avg_fz0", "hit_rate"]]
             .mean()
             .reset_index()
-            .to_string(
+        )
+
+        print(
+            summary_df.to_string(
                 index=False,
                 float_format=lambda x: f"{x:0.6f}" if isinstance(x, float) else str(x),
             )
