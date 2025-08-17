@@ -329,16 +329,10 @@ def main():
                     nu = args.skt_nu
                 if args.skt_lambda is not None:
                     lam = args.skt_lambda
-                y, sigma_t = simulate_garch11_skt(
-                    n=args.n,
-                    nu=nu,
-                    lam=lam,
-                    **{
-                        k: v
-                        for k, v in dgp_extra_params.items()
-                        if k not in ("nu", "lam", "seed")
-                    },
-                )
+                # Update dgp_extra_params with skew-t parameters
+                dgp_extra_params_updated = dgp_extra_params.copy()
+                dgp_extra_params_updated.update({"nu": nu, "lam": lam})
+                y, sigma_t = DGPS[args.dgp](n=args.n, **dgp_extra_params_updated)
                 tag_extra = f"_skt_nu{int(nu)}_lam{lam}".replace(".", "p").replace(
                     "-", "m"
                 )
