@@ -65,9 +65,27 @@ def pipeline(
             ),
             "model_desc": "GARCH(1,1) with Student-t innovations",
             "model_name": "GARCH",
-            # Hand back the series so your DM code can consume it
-            "loss_series": np.asarray(fz0),
+            # Remove loss_series to avoid verbose output - the data is still saved in .npz file
         }
+    )
+
+    # Save predictions to .npz file for consistency with transformer
+    import os
+
+    base = f"garch_{(run_tag + '_') if run_tag else ''}{'calibrated' if calibrate else 'raw'}".replace(
+        " ", ""
+    )
+    np.savez(
+        os.path.join(out_dir, f"{base}.npz"),
+        y=y_aligned,
+        var=v_eval,
+        es=e_eval,
+        fz0=fz0,
+        hits=(y_aligned <= v_eval).astype(int),
+        features=metrics["features"],
+        feature_parity=bool(feature_parity),
+        c_v=1.0 if not calibrate else metrics.get("c_v", 1.0),
+        c_e=1.0 if not calibrate else metrics.get("c_e", 1.0),
     )
 
     # We don't need to return a model object; keep None to match your runner style

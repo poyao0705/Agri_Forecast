@@ -577,6 +577,22 @@ def pipeline(
     with open(os.path.join(out_dir, f"{base}.json"), "w") as f:
         json.dump(metrics, f, indent=2)
 
+    # Save predictions to .npz file for consistency with other models
+    np.savez(
+        os.path.join(out_dir, f"{base}.npz"),
+        y=y_aligned,
+        var=v_eval,
+        es=e_eval,
+        fz0=fz0,
+        hits=hits,
+        features=(
+            [] if method == "rw" else ["baseline_features"]
+        ),  # Placeholder for baseline
+        feature_parity=False,  # Baseline doesn't use feature parity
+        c_v=1.0 if not calibrate else out.get("c_v", 1.0),
+        c_e=1.0 if not calibrate else out.get("c_e", 1.0),
+    )
+
     return model_name, metrics, (v_eval, e_eval, y_aligned, fz0)
 
 
