@@ -661,10 +661,7 @@ def pipeline(
         n=int(len(y_aligned)),
     )
 
-    # Save metrics to JSON
-    base = f"transformer_{(run_tag + '_') if run_tag else ''}{'calibrated' if calibrate else 'raw'}".replace(
-        " ", ""
-    )
+    # Save metrics to JSON (using the same base variable)
     with open(os.path.join(out_dir, f"{base}.json"), "w") as f:
         json.dump(metrics, f, indent=2)
 

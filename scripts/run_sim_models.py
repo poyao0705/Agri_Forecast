@@ -91,7 +91,7 @@ def run_transformer(
     print(f"Loading transformer from: {model_path}")
     transformer_module = SourceFileLoader("transformer", model_path).load_module()
 
-    # Run the pipeline
+    # Run the pipeline (this already saves the file with correct naming)
     model, metrics, (v_eval, e_eval, y_aligned, fz0) = transformer_module.pipeline(
         csv_path=csv_path,
         alpha=alpha,
@@ -102,16 +102,11 @@ def run_transformer(
         fig_dir=fig_dir,
     )
 
-    # Save predictions
-    npz_path = os.path.join(out_dir, f"transformer_{tag}.npz")
-    np.savez(
-        npz_path,
-        y=y_aligned,
-        var=v_eval,
-        es=e_eval,
-        fz0=fz0,
-        hits=(y_aligned <= v_eval).astype(int),
-    )
+    # The pipeline already saves the file with the correct name
+    # We just need to return the path to the saved file
+    # The filename will be: transformer_{tag}_calibrated.npz if calibrate=True, or transformer_{tag}.npz if calibrate=False
+    cal_suffix = "_calibrated" if calibrate else ""
+    npz_path = os.path.join(out_dir, f"transformer_{tag}{cal_suffix}.npz")
 
     return metrics, npz_path, model
 
@@ -123,7 +118,7 @@ def run_garch(
     print(f"Loading GARCH from: {model_path}")
     garch_module = SourceFileLoader("garch", model_path).load_module()
 
-    # Run the pipeline
+    # Run the pipeline (this already saves the file with correct naming)
     model, metrics, (v_eval, e_eval, y_aligned, fz0) = garch_module.pipeline(
         csv_path=csv_path,
         alpha=alpha,
@@ -134,16 +129,11 @@ def run_garch(
         fig_dir=fig_dir,
     )
 
-    # Save predictions
-    npz_path = os.path.join(out_dir, f"garch_{tag}.npz")
-    np.savez(
-        npz_path,
-        y=y_aligned,
-        var=v_eval,
-        es=e_eval,
-        fz0=fz0,
-        hits=(y_aligned <= v_eval).astype(int),
-    )
+    # The pipeline already saves the file with the correct name
+    # We just need to return the path to the saved file
+    # The filename will be: garch_{tag}_calibrated.npz if calibrate=True, or garch_{tag}.npz if calibrate=False
+    cal_suffix = "_calibrated" if calibrate else ""
+    npz_path = os.path.join(out_dir, f"garch_{tag}{cal_suffix}.npz")
 
     return metrics, npz_path, model
 
@@ -155,7 +145,7 @@ def run_baseline(
     print(f"Loading baseline from: {baseline_path}")
     baseline_module = SourceFileLoader("baseline", baseline_path).load_module()
 
-    # Run the baseline
+    # Run the baseline (this already saves the file with correct naming)
     model, metrics, (v_eval, e_eval, y_aligned, fz0) = baseline_module.pipeline(
         csv_path=csv_path,
         alpha=alpha,
@@ -166,16 +156,11 @@ def run_baseline(
         out_dir=out_dir,
     )
 
-    # Save predictions
-    npz_path = os.path.join(out_dir, f"baseline_{tag}.npz")
-    np.savez(
-        npz_path,
-        y=y_aligned,
-        var=v_eval,
-        es=e_eval,
-        fz0=fz0,
-        hits=(y_aligned <= v_eval).astype(int),
-    )
+    # The pipeline already saves the file with the correct name
+    # We just need to return the path to the saved file
+    # The filename will be: baseline_{tag}_calibrated.npz if calibrate=True, or baseline_{tag}.npz if calibrate=False
+    cal_suffix = "_calibrated" if calibrate else ""
+    npz_path = os.path.join(out_dir, f"baseline_{tag}{cal_suffix}.npz")
 
     return metrics, npz_path, model
 
