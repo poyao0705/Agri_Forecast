@@ -200,6 +200,23 @@ date,close
 - **Christoffersen Tests**: Independence and conditional coverage tests
 - **Diebold-Mariano**: Pairwise model comparison tests
 
+## 📁 Output Files
+
+### File Naming Convention
+- **Raw predictions**: `{model}_{tag}_raw.npz`
+- **Calibrated predictions**: `{model}_{tag}_calibrated.npz`
+
+### File Contents
+Each `.npz` file contains:
+- `y`: Actual returns
+- `var`: VaR predictions
+- `es`: ES predictions
+- `fz0`: FZ0 loss values
+- `hits`: Binary hit sequence
+- `features`: Feature column names
+- `feature_parity`: Boolean feature flag
+- `c_v`, `c_e`: Calibration factors
+
 ## 🔧 Installation
 
 1. Clone the repository:
@@ -231,6 +248,14 @@ pip install -r requirements.txt
 2. Use the new artifacts organization for all outputs
 3. Update the aggregation script if adding new metrics
 4. Document any new DGPs or models
+
+## 🔧 Recent Fixes (v2.0)
+
+- **Fixed duplicate file issue**: Eliminated identical files with different names
+- **Fixed file naming consistency**: All models now use consistent naming convention
+- **Added .npz file support**: GARCH and baseline models now create .npz files
+- **Fixed Diebold-Mariano tests**: All pairwise model comparisons work correctly
+- **Reduced verbose output**: Removed long number sequences from console output
 
 ## 📄 License
 

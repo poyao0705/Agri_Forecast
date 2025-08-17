@@ -404,7 +404,60 @@ df -h
 top -p $(pgrep python)
 ```
 
-### 3. Minimal Test Case
+### 3. File and Output Issues
+
+#### ❌ "No such file or directory" Error in Diebold-Mariano Tests
+```
+[warn] DM failed for Transformer vs GARCH: [Errno 2] No such file or directory: 'artifacts/.../transformer_..._raw.npz'
+```
+
+**Causes:**
+- File naming inconsistency between model runners and pipelines
+- Missing .npz files for GARCH or baseline models
+- Incorrect file path construction
+
+**Solutions:**
+1. **Fixed in version 2.0**: This issue has been resolved. All models now create consistent .npz files.
+
+2. **File naming convention** (current):
+   - Raw predictions: `{model}_{tag}_raw.npz`
+   - Calibrated predictions: `{model}_{tag}_calibrated.npz`
+
+3. **If you encounter this issue**, ensure you're using the latest version of the code.
+
+#### ❌ Duplicate Files with Different Names
+```
+# Two identical files with different names:
+transformer_garch11_skt_..._parity.npz
+transformer_garch11_skt_..._parity_calibrated.npz
+```
+
+**Causes:**
+- Double save operations in model runners
+- Pipeline and runner both saving the same data
+
+**Solutions:**
+1. **Fixed in version 2.0**: Removed duplicate save operations.
+
+2. **Expected behavior**:
+   - Each model run creates exactly one file per type
+   - Raw and calibrated predictions are properly separated
+
+#### ❌ Verbose Output with Long Number Sequences
+```
+GARCH model output contains: [-3.608626569378874, -3.6053690465226436, ...]
+```
+
+**Causes:**
+- Loss series arrays being printed in results summary
+- Large arrays included in metrics dictionary
+
+**Solutions:**
+1. **Fixed in version 2.0**: Removed verbose loss_series from console output.
+
+2. **Data still available**: FZ0 loss data is preserved in .npz files for analysis.
+
+### 4. Minimal Test Case
 Create a minimal test to isolate the issue:
 ```python
 # test_minimal.py
