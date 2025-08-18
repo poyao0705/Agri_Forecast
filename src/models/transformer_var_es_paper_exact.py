@@ -489,8 +489,6 @@ def pipeline(
     fig_dir="figures",
 ):
     os.makedirs(out_dir, exist_ok=True)
-    if run_tag:
-        fig_dir = os.path.join(fig_dir, run_tag)
     os.makedirs(fig_dir, exist_ok=True)
 
     df = pd.read_csv(csv_path)

@@ -62,6 +62,7 @@ def pipeline(
         kupiec_pof,
         christoffersen_independence,
         christoffersen_cc,
+        plot_var_es_diagnostics,
     )
 
     # Perform statistical tests
@@ -79,6 +80,22 @@ def pipeline(
     print(f"Christoffersen IND: LR={LR_ind:.4f}, p={p_ind:.4f}")
     print(f"Christoffersen CC : LR={LR_cc:.4f}, p={p_cc:.4f}")
     print(f"Avg FZ0: {fz0_mean:.6f}")
+
+    # Define base filename for saving (same as transformer)
+    base = f"garch_{(run_tag + '_') if run_tag else ''}{'calibrated' if calibrate else 'raw'}".replace(
+        " ", ""
+    )
+
+    # Generate diagnostic plots (same as transformer)
+    plot_var_es_diagnostics(
+        y_true=y_aligned,
+        var_pred=v_eval,
+        es_pred=e_eval,
+        alpha=alpha,
+        title=title,
+        out_dir=fig_dir,
+        fname_prefix=base,
+    )
 
     # Update the returned metrics with our custom fields
     metrics.update(
