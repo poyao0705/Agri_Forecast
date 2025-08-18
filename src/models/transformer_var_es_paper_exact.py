@@ -667,4 +667,51 @@ def pipeline(
 
 
 if __name__ == "__main__":
-    pipeline()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run Transformer model for VaR/ES prediction"
+    )
+    parser.add_argument(
+        "--csv",
+        default="data/merged_data_with_realised_volatility.csv",
+        help="Path to CSV file (default: data/merged_data_with_realised_volatility.csv)",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.01,
+        help="Alpha level for VaR/ES (default: 0.01)",
+    )
+    parser.add_argument(
+        "--calibrate", action="store_true", help="Apply calibration (default: False)"
+    )
+    parser.add_argument(
+        "--no-feature-parity",
+        dest="feature_parity",
+        action="store_false",
+        help="Use full features instead of parity (default: True)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default="saved_models",
+        help="Output directory for results (default: saved_models)",
+    )
+    parser.add_argument(
+        "--fig-dir",
+        default="figures",
+        help="Output directory for figures (default: figures)",
+    )
+    parser.add_argument("--run-tag", help="Optional run tag for file naming")
+
+    args = parser.parse_args()
+
+    pipeline(
+        csv_path=args.csv,
+        alpha=args.alpha,
+        feature_parity=args.feature_parity,
+        calibrate=args.calibrate,
+        run_tag=args.run_tag,
+        out_dir=args.out_dir,
+        fig_dir=args.fig_dir,
+    )

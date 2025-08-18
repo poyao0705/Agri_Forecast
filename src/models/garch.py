@@ -123,6 +123,7 @@ def pipeline(
 
     # Save predictions to .npz file for consistency with transformer
     import os
+    import json
 
     base = f"garch_{(run_tag + '_') if run_tag else ''}{'calibrated' if calibrate else 'raw'}".replace(
         " ", ""
@@ -140,5 +141,61 @@ def pipeline(
         c_e=1.0 if not calibrate else metrics.get("c_e", 1.0),
     )
 
+    # Save metrics to JSON file for consistency with transformer
+    with open(os.path.join(out_dir, f"{base}.json"), "w") as f:
+        json.dump(metrics, f, indent=2)
+
     # We don't need to return a model object; keep None to match your runner style
     return None, metrics, (v_eval, e_eval, y_aligned, fz0)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run GARCH(1,1)-t model for VaR/ES prediction"
+    )
+    parser.add_argument(
+        "--csv",
+        default="data/merged_data_with_realised_volatility.csv",
+        help="Path to CSV file (default: data/merged_data_with_realised_volatility.csv)",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.01,
+        help="Alpha level for VaR/ES (default: 0.01)",
+    )
+    parser.add_argument(
+        "--calibrate", action="store_true", help="Apply calibration (default: False)"
+    )
+    parser.add_argument(
+        "--no-feature-parity",
+        dest="feature_parity",
+        action="store_false",
+        help="Use full features instead of parity (default: True)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default="saved_models",
+        help="Output directory for results (default: saved_models)",
+    )
+    parser.add_argument(
+        "--fig-dir",
+        default="figures",
+        help="Output directory for figures (default: figures)",
+    )
+    parser.add_argument("--run-tag", help="Optional run tag for file naming")
+
+    args = parser.parse_args()
+
+    # Default parameters for direct execution
+    pipeline(
+        csv_path=args.csv,
+        alpha=args.alpha,
+        calibrate=args.calibrate,
+        feature_parity=args.feature_parity,
+        run_tag=args.run_tag,
+        out_dir=args.out_dir,
+        fig_dir=args.fig_dir,
+    )

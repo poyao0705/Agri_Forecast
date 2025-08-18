@@ -28,6 +28,200 @@ try:
 except Exception:
     HAVE_ARCH = False
 
+
+def _simple_garch_t_fallback(
+    returns: pd.Series,
+    alpha: float,
+    init_window: int,
+    show_progress: bool,
+):
+    """
+    Simple GARCH(1,1)-t fallback using only numpy/scipy, closer to 'arch' behavior.
+
+    - Mean model: Constant mean (mu) estimated via MLE.
+    - Innovations: standardized Student-t (unit variance). SciPy's t is re-scaled.
+    - Variance recursion: h_t filtered on the whole fit window; 1-step forecast uses last filtered h_t.
+    - Stationarity: soft constraint via penalty when alpha+beta >= 0.999.
+
+    Returns:
+        dict with:
+            'preds': DataFrame [VaR, ES, mu, sigma, nu] indexed by date (t+1),
+            'avg_fz0_loss': float,
+            'loss_series': pd.Series of per-step losses,
+            'hit_rate': float,
+            'n': int
+    """
+    import numpy as np
+    import pandas as pd
+    from scipy.optimize import minimize
+    from scipy.stats import t as student_t
+
+    # Try to import user's FZ0; fall back to a standard FZ0 variant if unavailable.
+    try:
+        from src.utils.eval_tools import fz0_per_step as _fz0_impl
+
+        def fz0_loss_per_step(y, v, e, a):  # keep the same signature
+            return float(_fz0_impl(y, v, e, a))
+
+    except Exception:
+
+        def fz0_loss_per_step(y, v, e, a):
+            # FZ0 (Fissler–Ziegel) basic form + weak regularizer on e<0
+            I = 1.0 if y <= v else 0.0
+            term1 = (I - a) * (v - y)
+            term2 = ((e - v) / a) * (I * (v - y) - a * (v - e))
+            reg = 1e-6 * np.log(np.maximum(1e-12, -e))  # tiny regularizer
+            return float(term1 + term2 + reg)
+
+    r = pd.Series(returns).astype(float).dropna()
+    n = len(r)
+    if n <= init_window + 1:
+        raise ValueError("Not enough data for expanding evaluation.")
+    if not (0.0 < alpha < 0.5):
+        raise ValueError("alpha should be in (0, 0.5).")
+
+    dates = r.index
+    preds, fz_losses, hits = [], [], []
+
+    def _backcast(u, lam=0.94):
+        """Exponential backcast for initial variance."""
+        w = (1 - lam) * lam ** np.arange(len(u) - 1, -1, -1)
+        w /= w.sum()
+        return (
+            float(np.sum(w * (u**2))) if len(u) else float(np.var(u) if len(u) else 1.0)
+        )
+
+    def _filter_variance(u, omega, a, b, h0=None):
+        """Filter h_t over u_t with GARCH(1,1)."""
+        h = np.empty_like(u, dtype=float)
+        h[0] = float(h0 if (h0 is not None and h0 > 0) else max(1e-8, np.var(u)))
+        for t in range(1, len(u)):
+            h[t] = omega + a * (u[t - 1] ** 2) + b * h[t - 1]
+            if not np.isfinite(h[t]) or h[t] <= 0:
+                h[t] = 1e-8
+        return h
+
+    def _neg_loglik(params, y):
+        """
+        Negative log-likelihood under standardized Student-t:
+        w_t = (y_t - mu) / (sqrt(h_t) * std),  std = sqrt((nu-2)/nu)
+        ll = sum( t_logpdf(w_t; nu) - 0.5*log(h_t) - log(std) )
+        """
+        omega, a, b, nu, mu = params
+
+        # Soft constraints + penalty if alpha+beta near 1 (to mimic stationarity handling).
+        pen = 0.0
+        if omega <= 0 or a < 0 or b < 0 or nu <= 2.05:
+            return 1e12
+        if a + b >= 0.999:
+            pen += 1e6 * (a + b - 0.999) ** 2
+
+        u = y - mu
+        h0 = _backcast(u)
+        h = _filter_variance(u, omega, a, b, h0=h0)
+
+        std = np.sqrt((nu - 2.0) / nu)
+        w = u / (np.sqrt(h) * std)
+
+        # Guard against numerical issues
+        if not np.all(np.isfinite(w)) or not np.all(h > 0):
+            return 1e12
+
+        ll = np.sum(student_t.logpdf(w, df=nu) - 0.5 * np.log(h) - np.log(std))
+        return -ll + pen
+
+    # expanding-window fit → predict t+1
+    for t in range(init_window, n - 1):
+        y_hist = r.iloc[: t + 1].values.astype(float)
+
+        # Inits (sane defaults)
+        mu_init = float(np.mean(y_hist))
+        var_init = float(np.var(y_hist))
+        alpha_init = 0.05
+        beta_init = 0.9
+        if alpha_init + beta_init >= 0.99:
+            beta_init = 0.98 - alpha_init
+        omega_init = max(1e-8, var_init * (1 - alpha_init - beta_init))
+        nu_init = 8.0
+
+        x0 = np.array(
+            [omega_init, alpha_init, beta_init, nu_init, mu_init], dtype=float
+        )
+        bounds = [
+            (1e-12, None),  # omega > 0
+            (0.0, 0.999),  # alpha >=0
+            (0.0, 0.999),  # beta  >=0
+            (2.05, None),  # nu > 2
+            (None, None),  # mu free
+        ]
+
+        try:
+            opt = minimize(
+                _neg_loglik,
+                x0,
+                args=(y_hist,),
+                method="L-BFGS-B",
+                bounds=bounds,
+                options={"maxiter": 1000},
+            )
+            if opt.success and np.all(np.isfinite(opt.x)):
+                omega, a, b, nu, mu = map(float, opt.x)
+            else:
+                omega, a, b, nu, mu = map(float, x0)
+        except Exception:
+            omega, a, b, nu, mu = map(float, x0)
+
+        # Re-filter on the final parameters to get h_t and forecast h_{t+1}
+        u_hist = y_hist - mu
+        h_hist = _filter_variance(u_hist, omega, a, b, h0=_backcast(u_hist))
+        h_next = float(omega + a * (u_hist[-1] ** 2) + b * h_hist[-1])
+        sigma_next = float(np.sqrt(max(h_next, 1e-12)))
+
+        # Student-t quantiles for unit-variance t (standardize SciPy t)
+        qz = float(student_t.ppf(alpha, df=nu))
+        std = float(np.sqrt((nu - 2.0) / nu))
+        q_std = qz * std
+
+        # ES for standardized t, then rescale
+        pdf = float(student_t.pdf(qz, df=nu))
+        es_std = -((nu + qz * qz) / ((nu - 1.0) * alpha)) * pdf * std
+
+        # Location shift by mu
+        v = mu + sigma_next * q_std
+        e = mu + sigma_next * es_std
+
+        # Enforce coherence softly
+        if e >= v:
+            e = v - 1e-12
+
+        # Next realized return
+        y_next = float(r.iloc[t + 1])
+
+        # Loss & hit
+        loss = fz0_loss_per_step(y_next, v, e, alpha)
+        hit = 1.0 if y_next <= v else 0.0
+
+        preds.append((dates[t + 1], v, e, mu, sigma_next, nu))
+        fz_losses.append(loss)
+        hits.append(hit)
+
+        if show_progress and ((t - init_window) % 250 == 0):
+            print(f"{t - init_window:5d}/{n - init_window - 1}  VaR={v:.6f} ES={e:.6f}")
+
+    df = pd.DataFrame(
+        preds, columns=["date", "VaR", "ES", "mu", "sigma", "nu"]
+    ).set_index("date")
+
+    out = {
+        "preds": df,
+        "avg_fz0_loss": float(np.mean(fz_losses)) if fz_losses else float("nan"),
+        "loss_series": pd.Series(fz_losses, index=df.index, name="fz0"),
+        "hit_rate": float(np.mean(hits)) if hits else float("nan"),
+        "n": int(df.shape[0]),
+    }
+    return out
+
+
 from scipy.stats import norm
 from scipy.stats import t as student_t
 
@@ -73,9 +267,10 @@ def _baseline_garch_t(
     returns: pd.Series, alpha: float, init_window: int, show_progress: bool
 ):
     if not HAVE_ARCH:
-        raise RuntimeError(
-            "arch is not installed; use method='rm_normal'/'rw' or install 'arch'."
+        print(
+            "Warning: arch package not available, using fallback GARCH implementation"
         )
+        return _simple_garch_t_fallback(returns, alpha, init_window, show_progress)
 
     from arch.univariate import ConstantMean, GARCH, StudentsT
     from scipy.stats import t as student_t
@@ -503,7 +698,7 @@ def pipeline(
     ramp: bool = True,
     include_train_history: bool = True,
     out_dir: str = "saved_models",
-    fig_dir: str = "figures",
+    fig_dir: Optional[str] = None,
 ):
     r = _load_returns_from_csv(csv_path)
     if method == "rw":
@@ -535,13 +730,23 @@ def pipeline(
 
     # Extract predictions and metrics
     preds = out["preds"]
-    y_aligned = preds.index.astype("datetime64[ns]").astype("int64")
     v_eval = preds["VaR"].values.astype(float)
     e_eval = preds["ES"].values.astype(float)
     fz0 = np.asarray(out["loss_series"].values, float)
 
+    # For all baseline methods, we need to get the actual return values, not datetime timestamps
+    if method == "rw":
+        # Get the actual return values corresponding to the prediction dates
+        # The rw-250 model predicts for dates from split_idx onwards
+        split_idx = int(len(r) * train_frac)
+        y_aligned = r.iloc[split_idx : split_idx + len(v_eval)].values
+    else:
+        # For garch_t and rm_normal methods, get the actual return values
+        # These methods predict for dates from init_window+1 onwards
+        y_aligned = r.iloc[init_window + 1 : init_window + 1 + len(v_eval)].values
+
     # Calculate hits
-    hits = (preds.index <= preds["VaR"]).astype(int)
+    hits = (y_aligned <= v_eval).astype(int)
 
     # Create model description
     # Note: We need to determine the actual feature type from the run_tag or context
@@ -594,22 +799,23 @@ def pipeline(
         c_e=1.0 if not calibrate else out.get("c_e", 1.0),
     )
 
-    # Generate diagnostic plots (same as transformer and GARCH)
-    from src.utils.eval_tools import plot_var_es_diagnostics
+    # Generate diagnostic plots (same as transformer and GARCH) only if fig_dir is provided
+    if fig_dir is not None:
+        from src.utils.eval_tools import plot_var_es_diagnostics
 
-    # Create title for plotting
-    title = f"{model_name} (features, {'calibrated' if calibrate else 'raw'})"
+        # Create title for plotting
+        title = f"{model_name} (features, {'calibrated' if calibrate else 'raw'})"
 
-    # Generate diagnostic plots
-    plot_var_es_diagnostics(
-        y_true=y_aligned,
-        var_pred=v_eval,
-        es_pred=e_eval,
-        alpha=alpha,
-        title=title,
-        out_dir=fig_dir,
-        fname_prefix=base,
-    )
+        # Generate diagnostic plots
+        plot_var_es_diagnostics(
+            y_true=y_aligned,
+            var_pred=v_eval,
+            es_pred=e_eval,
+            alpha=alpha,
+            title=title,
+            out_dir=fig_dir,
+            fname_prefix=base,
+        )
 
     return model_name, metrics, (v_eval, e_eval, y_aligned, fz0)
 

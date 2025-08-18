@@ -5,4 +5,4 @@ scikit-learn>=1.0.0
 matplotlib>=3.5.0
 scipy>=1.7.0
 seaborn>=0.11.0
-arch>=7.0.0
+# arch>=7.0.0  # Optional: for advanced GARCH modeling. Fallback implementation available if not installed.
