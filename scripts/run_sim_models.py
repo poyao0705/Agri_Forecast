@@ -139,7 +139,15 @@ def run_garch(
 
 
 def run_baseline(
-    csv_path, baseline_path, alpha, tag, method, init_window, out_dir, calibrate=False
+    csv_path,
+    baseline_path,
+    alpha,
+    tag,
+    method,
+    init_window,
+    out_dir,
+    fig_dir,
+    calibrate=False,
 ):
     """Run baseline model and return metrics, npz path, and model object."""
     print(f"Loading baseline from: {baseline_path}")
@@ -154,6 +162,7 @@ def run_baseline(
         calibrate=calibrate,  # Pass calibration flag
         run_tag=tag,
         out_dir=out_dir,
+        fig_dir=fig_dir,
     )
 
     # The pipeline already saves the file with the correct name
@@ -434,6 +443,7 @@ def main():
                     method=args.baseline_method,
                     init_window=args.baseline_init_window,
                     out_dir=os.path.join(artifact_dir, "baseline"),
+                    fig_dir=os.path.join(artifact_dir, "figures"),
                     calibrate=args.calibrate,  # Pass calibration flag
                 )
                 # Use the model name from metrics instead of hardcoding "Baseline"

@@ -503,6 +503,7 @@ def pipeline(
     ramp: bool = True,
     include_train_history: bool = True,
     out_dir: str = "saved_models",
+    fig_dir: str = "figures",
 ):
     r = _load_returns_from_csv(csv_path)
     if method == "rw":
@@ -591,6 +592,23 @@ def pipeline(
         feature_parity=False,  # Baseline doesn't use feature parity
         c_v=1.0 if not calibrate else out.get("c_v", 1.0),
         c_e=1.0 if not calibrate else out.get("c_e", 1.0),
+    )
+
+    # Generate diagnostic plots (same as transformer and GARCH)
+    from src.utils.eval_tools import plot_var_es_diagnostics
+
+    # Create title for plotting
+    title = f"{model_name} (features, {'calibrated' if calibrate else 'raw'})"
+
+    # Generate diagnostic plots
+    plot_var_es_diagnostics(
+        y_true=y_aligned,
+        var_pred=v_eval,
+        es_pred=e_eval,
+        alpha=alpha,
+        title=title,
+        out_dir=fig_dir,
+        fname_prefix=base,
     )
 
     return model_name, metrics, (v_eval, e_eval, y_aligned, fz0)
