@@ -53,10 +53,37 @@ def pipeline(
     # Calculate mean FZ0 loss
     fz0_mean = float(np.mean(fz0))
 
+    # Calculate additional metrics for printing
+    hits = (y_aligned <= v_eval).astype(int)
+    hit_rate = hits.mean()
+
+    # Import evaluation tools for statistical tests
+    from src.utils.eval_tools import (
+        kupiec_pof,
+        christoffersen_independence,
+        christoffersen_cc,
+    )
+
+    # Perform statistical tests
+    LR_pof, p_pof, _, _ = kupiec_pof(hits, alpha)
+    LR_ind, p_ind = christoffersen_independence(hits)
+    LR_cc, p_cc = christoffersen_cc(hits, alpha)
+
+    # Print diagnostic information similar to transformer
+    title = f"GARCH ({'parity' if feature_parity else 'full'}, {'calibrated' if calibrate else 'raw'})"
+    print("=" * 60)
+    print(title + (f"  [{run_tag}]" if run_tag else ""))
+    print("=" * 60)
+    print(f"Hit rate: {hit_rate:.4f} (Target {alpha:.4f})")
+    print(f"Kupiec: LR={LR_pof:.4f}, p={p_pof:.4f}")
+    print(f"Christoffersen IND: LR={LR_ind:.4f}, p={p_ind:.4f}")
+    print(f"Christoffersen CC : LR={LR_cc:.4f}, p={p_cc:.4f}")
+    print(f"Avg FZ0: {fz0_mean:.6f}")
+
     # Update the returned metrics with our custom fields
     metrics.update(
         {
-            "title": f"GARCH ({'parity' if feature_parity else 'full'}, {'calibrated' if calibrate else 'raw'})",
+            "title": title,
             "feature_parity": feature_parity,
             "features": (
                 ["x_cov"]
@@ -65,6 +92,14 @@ def pipeline(
             ),
             "model_desc": "GARCH(1,1) with Student-t innovations",
             "model_name": "GARCH",
+            "hit_rate": hit_rate,
+            "kupiec_LR": float(LR_pof),
+            "kupiec_p": float(p_pof),
+            "ind_LR": float(LR_ind),
+            "ind_p": float(p_ind),
+            "cc_LR": float(LR_cc),
+            "cc_p": float(p_cc),
+            "fz0_mean": fz0_mean,
             # Remove loss_series to avoid verbose output - the data is still saved in .npz file
         }
     )
