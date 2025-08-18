@@ -27,6 +27,8 @@ date,close
 ```
 
 ### 3. Run the Model
+
+**Option A: Standalone Script**
 ```bash
 # Basic usage
 python standalone_transformer.py --csv your_data.csv
@@ -48,6 +50,18 @@ python standalone_transformer.py --list_models
 
 # Force retraining (ignore existing model)
 python standalone_transformer.py --csv your_data.csv --force_retrain
+```
+
+**Option B: Direct Model Execution (Simplest)**
+```bash
+# Run transformer model directly
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --csv your_data.csv
+
+# Run GARCH model directly
+PYTHONPATH=. python src/models/garch.py --csv your_data.csv
+
+# With custom parameters
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --csv your_data.csv --alpha 0.05 --calibrate
 ```
 
 ## 📊 Output

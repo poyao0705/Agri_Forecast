@@ -6,7 +6,51 @@ This document provides detailed API documentation for all prediction scripts and
 
 ## 📊 Prediction Scripts
 
-### 1. Live Prediction (`live_prediction.py`)
+### 1. Direct Model Execution
+
+**Purpose**: Run models directly with command line arguments for maximum flexibility.
+
+#### Transformer Model
+```bash
+# Basic usage
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py
+
+# With custom parameters
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --alpha 0.05 --calibrate --run-tag "experiment1"
+```
+
+#### GARCH Model
+```bash
+# Basic usage
+PYTHONPATH=. python src/models/garch.py
+
+# With custom parameters
+PYTHONPATH=. python src/models/garch.py --alpha 0.05 --calibrate --no-feature-parity --run-tag "experiment2"
+```
+
+#### Command Line Arguments (Both Models)
+- `--csv`: Path to CSV file (default: `data/merged_data_with_realised_volatility.csv`)
+- `--alpha`: VaR/ES confidence level (default: 0.01)
+- `--calibrate`: Apply calibration (default: False)
+- `--no-feature-parity`: Use full features instead of parity (default: True)
+- `--out-dir`: Output directory for results (default: `saved_models`)
+- `--fig-dir`: Output directory for figures (default: `figures`)
+- `--run-tag`: Optional run tag for file naming
+
+### 2. Organized Runner (`run_individual_models.py`)
+
+**Purpose**: Run models with organized artifact structure and consistent interface.
+
+#### Usage
+```bash
+# Run transformer model
+python run_individual_models.py --model transformer --csv data/raw/merged_data_with_realised_volatility.csv
+
+# Run GARCH model
+python run_individual_models.py --model garch --csv data/raw/merged_data_with_realised_volatility.csv --calibrate
+```
+
+### 3. Live Prediction (`live_prediction.py`)
 
 **Purpose**: Make actual predictions for tomorrow's trading using all historical data.
 

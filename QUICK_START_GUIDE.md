@@ -36,17 +36,29 @@ data/
 ```
 
 ### Step 2: Run the Prediction
+
+**Option A: Direct Model Execution (Simplest)**
 ```bash
-python simple_prediction_guide.py
+# Run transformer model
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --csv data/your_prices.csv
+
+# Run GARCH model
+PYTHONPATH=. python src/models/garch.py --csv data/your_prices.csv
+```
+
+**Option B: Organized Runner**
+```bash
+python run_individual_models.py --model transformer --csv data/your_prices.csv
+python run_individual_models.py --model garch --csv data/your_prices.csv
 ```
 
 ### Step 3: Get Your Results
-The script will:
+The models will:
 1. **Train the model** on the first 50% of your data
 2. **Generate predictions** for the second 50% of your data
 3. **Save results** to:
-   - `predictions_output/` - Raw predictions and metrics
-   - `prediction_figures/` - Diagnostic plots
+   - `saved_models/` - Raw predictions and metrics (.npz, .json files)
+   - `figures/` - Diagnostic plots (.png files)
 
 ### What You Get
 For each day in your test period, you'll get:
@@ -96,8 +108,27 @@ Day | VaR    | ES     | Actual | Hit?
 ### Customization Options
 
 **Change confidence level:**
-```python
-results = predict_next_day_returns(csv_path, alpha=0.05)  # 5% VaR instead of 1%
+```bash
+# Command line option
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --alpha 0.05
+PYTHONPATH=. python src/models/garch.py --alpha 0.05
+```
+
+**Enable calibration:**
+```bash
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --calibrate
+PYTHONPATH=. python src/models/garch.py --calibrate
+```
+
+**Use full features instead of parity:**
+```bash
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --no-feature-parity
+PYTHONPATH=. python src/models/garch.py --no-feature-parity
+```
+
+**Custom output directories:**
+```bash
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --out-dir "my_results" --fig-dir "my_plots"
 ```
 
 **Use full features (more complex):**

@@ -2,6 +2,41 @@
 
 ## Current Available Scripts
 
+### **Direct Model Execution** (Simplest)
+**Purpose**: Run models directly with command line arguments
+
+**What it does:**
+- **Transformer**: `PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py`
+- **GARCH**: `PYTHONPATH=. python src/models/garch.py`
+- **Command line arguments**: Customize parameters without editing code
+- **Default outputs**: `saved_models/` and `figures/` directories
+- **Full evaluation**: Trains on 50% data, tests on 50% data
+
+**Use case**: Research, experimentation, model comparison
+
+**Output**:
+```
+============================================================
+Transformer (parity, raw)  [test_run]
+============================================================
+Hit rate: 0.0233 (Target 0.0100)
+Kupiec: LR=30.7205, p=0.0000
+Christoffersen IND: LR=0.3614, p=0.5477
+Christoffersen CC : LR=31.0819, p=0.0000
+Avg FZ0: -1.855515
+```
+
+### **Organized Runner** (`run_individual_models.py`)
+**Purpose**: Run models with organized artifact structure
+
+**What it does:**
+- **Structured outputs**: Organized by experiment parameters
+- **Multiple models**: Run transformer, GARCH, and baselines
+- **Consistent interface**: Same arguments for all models
+- **Artifact management**: Automatic directory organization
+
+**Use case**: Systematic experiments, model comparison, research
+
 ### **Hybrid Prediction** (`hybrid_live_prediction.py`)
 **Purpose**: Smart balance between retraining and calibration for daily predictions
 
@@ -29,7 +64,31 @@ Processing Time: 1250.45 seconds
 
 ---
 
-## When to Use Which Mode
+## When to Use Which Script
+
+### Use **Direct Model Execution** when:
+- ✅ You want to run models quickly and simply
+- ✅ You're doing research or experimentation
+- ✅ You want to compare different models
+- ✅ You need full evaluation (train/test split)
+- ✅ You want to customize parameters easily
+- ✅ You're new to the system (simplest approach)
+
+### Use **Organized Runner** when:
+- ✅ You're doing systematic experiments
+- ✅ You want organized output structure
+- ✅ You're comparing multiple models
+- ✅ You need consistent artifact management
+- ✅ You're doing research with multiple runs
+
+### Use **Hybrid Prediction** when:
+- ✅ You need daily predictions for trading
+- ✅ You want smart retraining/calibration
+- ✅ You're in a production environment
+- ✅ You need persistent memory across sessions
+- ✅ You want automated decision making
+
+## When to Use Which Hybrid Mode
 
 ### Use `--mode retrain` when:
 - ✅ You want the most up-to-date model

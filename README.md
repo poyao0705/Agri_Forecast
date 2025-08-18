@@ -9,18 +9,23 @@ This project implements and evaluates various models for forecasting Value-at-Ri
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Run hybrid prediction (recommended for first-time users)
-python hybrid_live_prediction.py --mode auto
+# 2. Run models directly (simplest approach)
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py
+PYTHONPATH=. python src/models/garch.py
 
-# 3. Or use specific modes for different needs
-python hybrid_live_prediction.py --mode retrain  # Full retraining
-python hybrid_live_prediction.py --mode calibrate  # Fast calibration
+# 3. Or use the organized runner
+python run_individual_models.py --model transformer --csv data/raw/merged_data_with_realised_volatility.csv
+python run_individual_models.py --model garch --csv data/raw/merged_data_with_realised_volatility.csv
 ```
 
 ### For Researchers
 ```bash
 # Run experiments with different configurations
 python scripts/run_sim_models.py --dgp garch11_skt --alpha 0.01 --calibrate --seed 42
+
+# Or run individual models with custom parameters
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --alpha 0.05 --calibrate --run-tag "experiment1"
+PYTHONPATH=. python src/models/garch.py --alpha 0.05 --calibrate --no-feature-parity --run-tag "experiment2"
 ```
 
 ## 📁 Project Structure
@@ -39,7 +44,8 @@ agri-forecast/
 │  └─ processed/                # Aligned & feature-built data for training
 ├─ src/
 │  ├─ models/                   # Neural network models
-│  │  ├─ transformer_var_es_paper_exact.py  # Main transformer model
+│  │  ├─ transformer_var_es_paper_exact.py  # Main transformer model (runnable)
+│  │  ├─ garch.py              # GARCH model (runnable)
 │  │  └─ srnn_ve1_paper_exact.py
 │  ├─ baselines/                # Classical baseline models
 │  │  └─ baseline_classic_var_es.py
@@ -55,6 +61,7 @@ agri-forecast/
 │  ├─ run_sim_models.py         # Main CLI for running experiments
 │  ├─ aggregate_results.py      # Post-run aggregation and analysis
 │  └─ reorganize_legacy.py      # (Optional) migrator for old outputs
+├─ run_individual_models.py     # 🆕 Organized runner for individual models
 ├─ artifacts/                   # ONE folder per (dgp, alpha, seed, cal, features)
 ├─ hybrid_predictions/          # 🆕 Prediction outputs
 ├─ prediction_figures/          # 🆕 Diagnostic plots
@@ -83,7 +90,37 @@ ES (Expected Shortfall): -3.45%
 Risk Level: MODERATE
 ```
 
-## 📊 Prediction Scripts
+## 📊 Model Execution Options
+
+### **Direct Model Execution** (Simplest)
+**Purpose**: Run models directly with minimal setup
+- ✅ **Transformer**: `PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py`
+- ✅ **GARCH**: `PYTHONPATH=. python src/models/garch.py`
+- ✅ **Command line arguments**: Customize parameters without editing code
+- ✅ **Default outputs**: `saved_models/` and `figures/` directories
+
+```bash
+# Basic usage
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py
+PYTHONPATH=. python src/models/garch.py
+
+# Custom parameters
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --alpha 0.05 --calibrate --run-tag "my_experiment"
+PYTHONPATH=. python src/models/garch.py --csv "my_data.csv" --no-feature-parity --out-dir "my_results"
+```
+
+### **Organized Runner** (`run_individual_models.py`)
+**Purpose**: Run models with organized artifact structure
+- ✅ **Structured outputs**: Organized by experiment parameters
+- ✅ **Multiple models**: Run transformer, GARCH, and baselines
+- ✅ **Consistent interface**: Same arguments for all models
+- ✅ **Artifact management**: Automatic directory organization
+
+```bash
+# Run with organized outputs
+python run_individual_models.py --model transformer --csv data/raw/merged_data_with_realised_volatility.csv
+python run_individual_models.py --model garch --csv data/raw/merged_data_with_realised_volatility.csv --calibrate
+```
 
 ### **Hybrid Prediction** (`hybrid_live_prediction.py`)
 **Purpose**: Smart balance between retraining and calibration for daily predictions

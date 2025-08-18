@@ -20,6 +20,15 @@ python standalone_transformer_class.py --csv your_data.csv --alpha 0.01 --featur
 python standalone_transformer_class.py --csv your_data.csv --alpha 0.01 --feature_parity --live_mode --mode auto
 ```
 
+### Alternative: Direct Model Execution
+```bash
+# Run transformer model directly
+PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --csv your_data.csv --alpha 0.01
+
+# Run GARCH model directly
+PYTHONPATH=. python src/models/garch.py --csv your_data.csv --alpha 0.01
+```
+
 ### Live Mode Options
 ```bash
 # Force retraining

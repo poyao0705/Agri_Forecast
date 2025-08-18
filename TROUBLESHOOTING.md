@@ -2,6 +2,36 @@
 
 ## 🚨 Common Issues and Solutions
 
+### 0. Module Import Issues
+
+#### ❌ "No module named 'src'" Error
+```
+ModuleNotFoundError: No module named 'src'
+```
+
+**Causes:**
+- Python can't find the `src` module
+- Running from wrong directory
+- Missing PYTHONPATH setting
+
+**Solutions:**
+1. **Always use PYTHONPATH when running models directly:**
+   ```bash
+   PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py
+   PYTHONPATH=. python src/models/garch.py
+   ```
+
+2. **Or run from the project root directory:**
+   ```bash
+   cd /path/to/Agri_Forecast
+   PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py
+   ```
+
+3. **Alternative: Use the organized runner (no PYTHONPATH needed):**
+   ```bash
+   python run_individual_models.py --model transformer --csv data/raw/merged_data_with_realised_volatility.csv
+   ```
+
 ### 1. Data Issues
 
 #### ❌ "Data file not found" Error
@@ -17,17 +47,24 @@
 **Solutions:**
 1. Check if your CSV file exists:
    ```bash
-   ls -la data/
+   ls -la data/raw/
    ```
 
 2. Ensure your CSV has the required `close` column:
    ```bash
-   head -5 data/your_file.csv
+   head -5 data/raw/merged_data_with_realised_volatility.csv
    ```
 
-3. Update the file path in your script:
-   ```python
-   csv_path = "data/your_actual_file.csv"
+3. **Specify the correct path when running models:**
+   ```bash
+   # Use the correct data path
+   PYTHONPATH=. python src/models/transformer_var_es_paper_exact.py --csv data/raw/merged_data_with_realised_volatility.csv
+   PYTHONPATH=. python src/models/garch.py --csv data/raw/merged_data_with_realised_volatility.csv
+   ```
+
+4. **Or use the organized runner with correct path:**
+   ```bash
+   python run_individual_models.py --model transformer --csv data/raw/merged_data_with_realised_volatility.csv
    ```
 
 #### ❌ "Not enough data for training" Error

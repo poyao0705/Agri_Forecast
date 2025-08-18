@@ -5,29 +5,29 @@
 ### ✅ **KEEP** (Updated and Essential)
 
 1. **`README.md`** - Main project documentation
-   - ✅ **UPDATED**: Added new prediction scripts, quick start guide, use cases
+   - ✅ **UPDATED**: Added direct model execution, organized runner, new quick start guide
    - ✅ **ESSENTIAL**: Primary entry point for users
    - ✅ **IMPROVED**: Better structure with emojis, clear sections, examples
 
 2. **`QUICK_START_GUIDE.md`** - New user guide
-   - ✅ **NEW**: Created for new users
+   - ✅ **UPDATED**: Added direct model execution options, command line arguments
    - ✅ **ESSENTIAL**: Step-by-step instructions
    - ✅ **COMPREHENSIVE**: Covers all basic use cases
 
 3. **`PREDICTION_COMPARISON.md`** - Script comparison
-   - ✅ **NEW**: Explains differences between scripts
+   - ✅ **UPDATED**: Added direct model execution and organized runner
    - ✅ **USEFUL**: Helps users choose the right approach
    - ✅ **CLEAR**: Side-by-side comparison
 
 ### ✅ **ADD** (New Essential Files)
 
 4. **`API_DOCUMENTATION.md`** - Comprehensive API docs
-   - ✅ **NEW**: Detailed function documentation
+   - ✅ **UPDATED**: Added direct model execution and organized runner documentation
    - ✅ **ESSENTIAL**: For developers and advanced users
    - ✅ **COMPLETE**: Covers all functions and classes
 
 5. **`TROUBLESHOOTING.md`** - Problem-solving guide
-   - ✅ **NEW**: Common issues and solutions
+   - ✅ **UPDATED**: Added module import issues, updated data path solutions
    - ✅ **ESSENTIAL**: Reduces support burden
    - ✅ **COMPREHENSIVE**: Covers all major issues
 
