@@ -163,11 +163,18 @@ def make_windows_with_stride(
         return torch.empty(0, seq_len, Fdim), torch.empty(0)
 
     X_win = xt.unfold(dimension=0, size=seq_len, step=stride)
-    X_win = X_win[:-1]
+    # X_win = X_win[:-1]
     X_win = _normalize_unfold_shape(X_win, seq_len, Fdim)
 
     num = X_win.size(0)
-    y_idx = torch.arange(seq_len, seq_len + num * stride, step=stride, device=yt.device)
+    # y_idx = torch.arange(seq_len, seq_len + num * stride, step=stride, device=yt.device)
+    # align to window end t (since y[t] is already r_{t+1})
+    y_idx = torch.arange(
+        seq_len - 1, seq_len - 1 + num * stride, step=stride, device=yt.device
+    )
+    # --- Alignment guards (dev only) ---
+    assert int(y_idx[0]) == seq_len - 1, "First label must align to window end"
+    assert int(y_idx[-1]) == (seq_len - 1) + (num - 1) * stride, "Last label misaligned"
     y_next = yt.index_select(0, y_idx).contiguous()
     return X_win.contiguous(), y_next
 
@@ -442,11 +449,19 @@ def evaluate_with_sliding_batch(
     xt = torch.as_tensor(X2, dtype=torch.float32)
     Fdim = xt.size(1)
 
-    xwin = xt.unfold(dimension=0, size=seq_len, step=1)[:-1]
+    # xwin = xt.unfold(dimension=0, size=seq_len, step=1)[:-1]
+    xwin = xt.unfold(dimension=0, size=seq_len, step=1)
     xwin = _normalize_unfold_shape(xwin, seq_len, Fdim)
 
-    s = start_idx - seq_len
-    x_eval = xwin[s : s + n_pred]
+    # s = start_idx - seq_len
+    # x_eval = xwin[s : s + n_pred]
+    # window index j has end = j + seq_len - 1
+    # want first window to end at start_idx → j0 = start_idx - (seq_len - 1)
+    j0 = start_idx - (seq_len - 1)
+    # --- Alignment/bounds guards (dev only) ---
+    assert j0 >= 0, "start_idx too small for seq_len; adjust guards"
+    assert (j0 + n_pred) <= xwin.size(0), "Not enough eval windows for n_pred"
+    x_eval = xwin[j0 : j0 + n_pred]
 
     preds_v, preds_e = [], []
     model.eval()
