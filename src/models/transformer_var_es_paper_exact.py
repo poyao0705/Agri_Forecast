@@ -118,7 +118,13 @@ def split_and_make_features(
 
     scaler = StandardScaler().fit(X_train)
     X_train = scaler.transform(X_train).astype(np.float32)
-    X_test = scaler.transform(X_test).astype(np.float32)
+
+    # Handle case where X_test is empty (when train_frac=1.0)
+    if len(X_test) > 0:
+        X_test = scaler.transform(X_test).astype(np.float32)
+    else:
+        X_test = np.empty((0, X_train.shape[1]), dtype=np.float32)
+        y_test = np.empty(0, dtype=np.float32)
 
     meta = {
         "split_idx": split,

@@ -94,14 +94,18 @@ class StandalonePredictor:
                 self.last_training_date = datetime.fromisoformat(
                     info["last_training_date"]
                 )
+                self.last_model_path = info.get("model_path")  # <-- NEW
                 print(
                     f"✓ Loaded last training date: {self.last_training_date.strftime('%Y-%m-%d')}"
                 )
+                if self.last_model_path:
+                    print(f"✓ Last model path: {self.last_model_path}")
         except Exception as e:
-            print(f"Note: Could not load last training date: {e}")
+            print(f"Note: Could not load last training info: {e}")
             self.last_training_date = None
+            self.last_model_path = None
 
-    def save_training_info(self):
+    def save_training_info(self, model_path=None):
         try:
             os.makedirs(self.output_dir, exist_ok=True)
             training_info_file = os.path.join(
@@ -111,12 +115,30 @@ class StandalonePredictor:
                 "last_training_date": datetime.now().isoformat(),
                 "alpha": self.alpha,
                 "csv_path": self.csv_path,
+                "model_path": model_path or "",  # <-- NEW
+                "train_frac": self.train_frac,  # optional breadcrumb
             }
             with open(training_info_file, "w") as f:
                 json.dump(info, f, indent=2)
             print(f"✓ Saved training info to: {training_info_file}")
         except Exception as e:
             print(f"Warning: Could not save training info: {e}")
+
+    def load_model_from_path(self, model_path: str):
+        """Load weights + meta from an explicit path (used by calibrate mode)."""
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+        meta_path = model_path.replace(".pth", ".meta.json")
+        if not os.path.exists(meta_path):
+            raise FileNotFoundError(f"Meta file not found: {meta_path}")
+        with open(meta_path, "r") as f:
+            self.meta = json.load(f)
+        self.feature_cols = self.meta["feature_cols"]
+        model = BasicVaRTransformer(input_dim=len(self.feature_cols))
+        state = torch.load(model_path, map_location="cpu")
+        model.load_state_dict(state)
+        print(f"Model loaded from: {model_path}")
+        return model
 
     # --------------------
     # Data & feature prep
@@ -316,7 +338,7 @@ class StandalonePredictor:
         print("NEXT DAY PREDICTION")
         print("=" * 50)
 
-        dfp = build_inputs_from_prices(self.df)
+        dfp = self.df
         X_std = self._transform_with_meta(dfp)
 
         # most recent context window (standardized, correct features)
@@ -357,7 +379,8 @@ class StandalonePredictor:
 
         # Use last `calibration_window` rows from already-processed frame
         df_recent = self.df.tail(calibration_window)
-        dfp = build_inputs_from_prices(df_recent)
+        # dfp = build_inputs_from_prices(df_recent)
+        dfp = df_recent
         X_std = self._transform_with_meta(dfp)
 
         # Sliding one-step windows (predict t+1 from context ending at t)
@@ -405,7 +428,8 @@ class StandalonePredictor:
     def make_live_prediction(self):
         """Make prediction for tomorrow using the model and current calibration factors."""
         print("Making prediction for tomorrow...")
-        dfp = build_inputs_from_prices(self.df)
+        # dfp = build_inputs_from_prices(self.df)
+        dfp = self.df
         X_std = self._transform_with_meta(dfp)
         recent_features = X_std[-CONTEXT_LEN:]
         x_input = torch.tensor(recent_features, dtype=torch.float32).unsqueeze(0)
@@ -491,18 +515,28 @@ class StandalonePredictor:
             return days_since_training >= retrain_days
         return False
 
-    def run_live_mode(self, mode="auto", retrain_days=7, calibration_window=100):
+    def run_live_mode(
+        self, mode="auto", retrain_days=7, calibration_window=100, live_train_frac=1.0
+    ):
         print("=" * 60)
         print("HYBRID LIVE PREDICTION MODE")
         print("=" * 60)
-
         should_retrain_model = self.should_retrain(retrain_days, mode)
         if should_retrain_model:
             print("Mode: FULL RETRAINING (using all data)")
             start_time = time.time()
             self.load_and_prepare_data()
+            self.train_frac = live_train_frac
+            print(f"[LIVE] Overriding train_frac to {self.train_frac}.")
+
             self.model = self.train_model(force_retrain=True)
-            self.save_training_info()
+
+            # persist the exact model path we just wrote
+            model_filename = self.get_model_filename()
+            model_path = os.path.join(self.model_dir, model_filename)
+            self.last_model_path = model_path
+            self.save_training_info(model_path=model_path)
+
             training_time = time.time() - start_time
             cal_time = self.update_calibration_factors(calibration_window)
             total_time = training_time + cal_time
@@ -514,15 +548,31 @@ class StandalonePredictor:
             )
             print(f"Mode: CALIBRATION (last trained: {last_trained_str})")
             self.load_and_prepare_data()
-            # Load model + meta
-            model_filename = self.get_model_filename()
-            model_path = os.path.join(self.model_dir, model_filename)
-            if not os.path.exists(model_path):
-                print(
-                    "❌ No trained model found. Please run with mode='retrain' first."
-                )
-                return None
-            self.model = self.train_model(force_retrain=False)
+
+            # In calibration mode, try to use the saved model path first
+            if (
+                hasattr(self, "last_model_path")
+                and self.last_model_path
+                and os.path.exists(self.last_model_path)
+            ):
+                print(f"Loading previous model from saved path: {self.last_model_path}")
+                self.model = self.load_model_from_path(self.last_model_path)
+            else:
+                # Fallback: try current filename (data hash may have changed)
+                model_filename = self.get_model_filename()
+                model_path = os.path.join(self.model_dir, model_filename)
+
+                if os.path.exists(model_path):
+                    print(f"Found current model: {model_path}")
+                    self.model = self.train_model(
+                        force_retrain=False
+                    )  # loads by current name
+                else:
+                    print(
+                        "❌ No trained model found. Please run with mode='retrain' first."
+                    )
+                    return None
+
             cal_time = self.update_calibration_factors(calibration_window)
             total_time = cal_time
 
@@ -631,6 +681,13 @@ def main():
         default="predictions",
         help="Directory to save live predictions",
     )
+    parser.add_argument(
+        "--live_train_frac",
+        type=float,
+        default=1.0,
+        help="Training fraction used when retraining in --live_mode (default: 1.0)",
+    )
+
     args = parser.parse_args()
 
     if args.list_models:
@@ -654,6 +711,7 @@ def main():
                 mode=args.mode,
                 retrain_days=args.retrain_days,
                 calibration_window=args.calibration_window,
+                live_train_frac=args.live_train_frac,
             )
         else:
             predictor.run_standard_mode(
