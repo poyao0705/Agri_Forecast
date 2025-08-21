@@ -350,24 +350,25 @@ class StandalonePredictor:
         print(f"Risk level: {risk_level}")
         return {"var": var_calibrated, "es": es_calibrated, "risk_level": risk_level}
 
-    def update_calibration_factors(self, calibration_window=100):
+    def update_calibration_factors(self, calibration_window=3000):
         """Update calibration factors using recent history (causal, 1-step aligned)."""
         print("Updating calibration factors...")
         start_time = time.time()
 
+        # Use last `calibration_window` rows from already-processed frame
         df_recent = self.df.tail(calibration_window)
         dfp = build_inputs_from_prices(df_recent)
         X_std = self._transform_with_meta(dfp)
 
-        # Sliding one-step windows with step=1 (window ends at t, label is y[t])
+        # Sliding one-step windows (predict t+1 from context ending at t)
+        nwin = len(X_std) - CONTEXT_LEN  # <-- correct count for next-day forecasts
+        if nwin <= 0:
+            print("Not enough recent data for calibration; keeping factors at 1.0")
+            return 0.0
+
         self.model.eval()
         v_raw, e_raw = [], []
         with torch.no_grad():
-            # number of windows whose end ≤ last index
-            nwin = len(X_std) - CONTEXT_LEN + 1
-            if nwin <= 0:
-                print("Not enough recent data for calibration; keeping factors at 1.0")
-                return 0.0
             for i in range(nwin):
                 xwin = X_std[i : i + CONTEXT_LEN]
                 x_input = torch.tensor(xwin, dtype=torch.float32).unsqueeze(0)
@@ -377,13 +378,13 @@ class StandalonePredictor:
         v_raw = np.asarray(v_raw, dtype=float)
         e_raw = np.asarray(e_raw, dtype=float)
 
-        # 1-step label alignment: window ending at t uses y[t]
+        # 1-step label alignment: window i (ending at t) -> label y[t+1]
         y_arr = dfp["target_return"].values
-        start_label = CONTEXT_LEN - 1
-        y_recent = y_arr[start_label : start_label + len(v_raw)]
+        y_recent = y_arr[CONTEXT_LEN : CONTEXT_LEN + nwin]
+
         assert (
             len(v_raw) == len(e_raw) == len(y_recent)
-        ), "Calib: pred/label length mismatch"
+        ), f"Calib: pred/label length mismatch ({len(v_raw)}, {len(e_raw)}, {len(y_recent)})"
 
         # Rolling online factors (history up to t-1)
         c_v, c_e = rolling_online_factors(y_recent, v_raw, e_raw, self.alpha)
@@ -444,10 +445,10 @@ class StandalonePredictor:
         print(f"  Calibrated VaR: {results['var_pct']:.2f}%")
         print(f"\nInterpretation:")
         print(
-            f"• VaR: We expect the maximum loss tomorrow to be {abs(results['var_pct']):.2f}%"
+            f"• VaR: We expect the (α-quantile) loss tomorrow to be about {abs(results['var_pct']):.2f}%"
         )
         print(
-            f"• ES: If tomorrow is really bad, we expect to lose {abs(results['es_pct']):.2f}% on average"
+            f"• ES: If tomorrow lands in the worst α% tail, the average loss is ~{abs(results['es_pct']):.2f}%"
         )
         var_abs = abs(results["var_pct"])
         if var_abs < 1:
