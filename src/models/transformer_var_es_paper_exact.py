@@ -1,6 +1,38 @@
+#!/usr/bin/env python3
+"""
+Transformer Model for VaR/ES Prediction
+
+A comprehensive implementation of a transformer-based model for predicting
+Value-at-Risk (VaR) and Expected Shortfall (ES) from financial time series data.
+
+This module provides:
+- Transformer architecture for sequence modeling
+- Feature engineering from price data
+- Training pipeline with sliding windows
+- Evaluation with statistical backtesting
+- Calibration utilities for improved accuracy
+
+Key Features:
+- Multi-head attention mechanism for capturing temporal dependencies
+- Feature parity mode for fair comparison studies
+- Online calibration for improved prediction accuracy
+- Comprehensive backtesting with statistical tests
+- Model persistence and reuse capabilities
+
+Usage:
+    from transformer_var_es_paper_exact import pipeline
+
+    model, metrics, (v_eval, e_eval, y_aligned, fz0) = pipeline(
+        csv_path="data.csv",
+        alpha=0.01,
+        feature_parity=True,
+        calibrate=True
+    )
+"""
+
 import os
 import json
-from typing import Tuple, List
+from typing import Tuple, List, Optional, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -11,7 +43,7 @@ from torch.utils.data import TensorDataset, DataLoader
 from torch.optim.lr_scheduler import StepLR
 from sklearn.preprocessing import StandardScaler
 
-from src.utils.eval_tools import (
+from utils.eval_tools import (
     fz0_per_step,
     exact_var_factor,
     exact_es_factor,
@@ -24,42 +56,64 @@ from src.utils.eval_tools import (
 )
 
 # ============================
-# Config (shared across models)
+# Configuration Parameters
 # ============================
+
+# Random seed for reproducibility
 SEED = 42
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-ALPHA = 0.01
-TRAIN_FRAC = 0.5
-CONTEXT_LEN = 64
-BATCH_SIZE = 64
-MAX_EPOCHS = 200
-PATIENCE = 30
-LR = 1e-4
-WEIGHT_DECAY = 1e-3
+# Model hyperparameters
+ALPHA = 0.01  # VaR/ES confidence level (1%)
+TRAIN_FRAC = 0.5  # Training data fraction
+CONTEXT_LEN = 64  # Sequence length for transformer
+BATCH_SIZE = 64  # Training batch size
+MAX_EPOCHS = 200  # Maximum training epochs
+PATIENCE = 30  # Early stopping patience
+LR = 1e-4  # Learning rate
+WEIGHT_DECAY = 1e-3  # Weight decay for regularization
 
-# Stride controls
-TRAIN_STRIDE = 1
-CALIB_STRIDE = 16  # less correlation for calibration windows
-VAL_GAP_WINDOWS = CONTEXT_LEN
+# Sliding window parameters
+TRAIN_STRIDE = 1  # Stride for training windows
+CALIB_STRIDE = 16  # Stride for calibration (reduces correlation)
+VAL_GAP_WINDOWS = CONTEXT_LEN  # Gap between train and validation
 
+# Calibration parameters
+CAL_LATE_FRAC = 0.70  # Use last 30% of training data for calibration
+CAL_TARGET_HITS = 12  # Target number of tail hits in calibration set
+CAL_MIN_HITS = 6  # Minimum hits before applying calibration
+CAL_MAX_STRIDE = 32  # Maximum stride for calibration windows
+CAL_FACTOR_CLAMP = (0.7, 1.5)  # Safety bounds for calibration factors
 
-# --- Easy calibration defaults ---
-CAL_LATE_FRAC = 0.70  # calibrate on the last 30% of train
-CAL_TARGET_HITS = 12  # aim for ~12 tail hits in cal set
-CAL_MIN_HITS = 6  # below this, shrink factors toward 1
-CAL_MAX_STRIDE = 32  # don't stride sparser than this
-CAL_FACTOR_CLAMP = (0.7, 1.5)  # soft safety bounds on factors
-
-# Fallbacks if your globals aren't defined
+# Fallback values for calibration
 CAL_MIN_HITS = globals().get("CAL_MIN_HITS", 10)
 CAL_FACTOR_CLAMP = globals().get("CAL_FACTOR_CLAMP", (0.25, 4.0))
 
 
 def _choose_cal_stride(
-    n_train, seq_len, alpha, target_hits=CAL_TARGET_HITS, max_stride=CAL_MAX_STRIDE
-):
+    n_train: int,
+    seq_len: int,
+    alpha: float,
+    target_hits: int = CAL_TARGET_HITS,
+    max_stride: int = CAL_MAX_STRIDE,
+) -> int:
+    """
+    Choose optimal stride for calibration windows.
+
+    Determines the stride that will give approximately the target number
+    of tail hits in the calibration set while respecting maximum stride limits.
+
+    Args:
+        n_train (int): Number of training observations
+        seq_len (int): Sequence length for transformer
+        alpha (float): VaR/ES confidence level
+        target_hits (int): Target number of tail hits in calibration set
+        max_stride (int): Maximum allowed stride
+
+    Returns:
+        int: Optimal stride for calibration windows
+    """
     approx_windows = max(n_train - seq_len - 1, 1)  # stride-1 windows
     target_windows = max(int(target_hits / alpha), 1)
     stride = max(1, min(max_stride, approx_windows // target_windows))
@@ -67,35 +121,74 @@ def _choose_cal_stride(
 
 
 # ============================
-# Shared utilities
+# Data Processing and Feature Engineering
 # ============================
+
+
 def build_inputs_from_prices(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build features from price data for VaR/ES prediction.
+
+    Creates engineered features from closing prices including:
+    - Log returns and squared returns
+    - Negative return indicators
+    - Exponentially weighted moving average volatility proxies
+    - Target variable (next-step return)
+
+    Args:
+        df (pd.DataFrame): DataFrame with 'close' column
+
+    Returns:
+        pd.DataFrame: DataFrame with engineered features
+
+    Note:
+        Features are designed to be causal (no look-ahead bias)
+        except for contemporaneous features which are allowed
+        when predicting the next step.
+    """
     df = df.copy()
+
+    # Calculate log returns
     df["log_ret"] = np.log(df["close"]).diff()
 
-    # contemporaneous features (allowed when predicting next step)
+    # Contemporaneous features (allowed when predicting next step)
     df["r2"] = df["log_ret"] ** 2
     df["neg_ret"] = (df["log_ret"] < 0).astype(np.float32)
 
-    # volatility proxies using past-only information
+    # Volatility proxies using past-only information
     df["ewma94_var"] = df["r2"].ewm(alpha=1 - 0.94, adjust=False).mean().shift(1)
     df["ewma97_var"] = df["r2"].ewm(alpha=1 - 0.97, adjust=False).mean().shift(1)
     df["ewma94"] = np.sqrt(df["ewma94_var"])
     df["ewma97"] = np.sqrt(df["ewma97_var"])
 
-    # target = next-step return
+    # Target variable: next-step return
     df["target_return"] = df["log_ret"].shift(-1)
+
+    # Remove NaN values and reset index
     df = df.dropna().reset_index(drop=True)
     return df
 
 
 def _make_features(df: pd.DataFrame, feature_parity: bool) -> List[str]:
-    # parity -> only x_cov; otherwise add richer set
-    return (
-        ["x_cov"]
-        if feature_parity
-        else ["ewma94", "ewma97", "x_cov", "neg_xcov", "neg_ret"]
-    )
+    """
+    Select feature columns based on feature parity setting.
+
+    Args:
+        df (pd.DataFrame): DataFrame with engineered features
+        feature_parity (bool): If True, use only x_cov feature for fair comparison
+
+    Returns:
+        List[str]: List of feature column names to use
+
+    Note:
+        Feature parity mode uses only the x_cov feature to ensure
+        fair comparison with other models that may have limited
+        feature access.
+    """
+    if feature_parity:
+        return ["x_cov"]
+    else:
+        return ["ewma94", "ewma97", "x_cov", "neg_xcov", "neg_ret"]
 
 
 def split_and_make_features(
@@ -345,7 +438,37 @@ class PositionalEncoding(nn.Module):
 
 
 class BasicVaRTransformer(nn.Module):
-    def __init__(self, input_dim, model_dim=32, num_heads=2, num_layers=1, dropout=0.2):
+    """
+    Basic Transformer model for VaR/ES prediction.
+
+    A transformer-based neural network that predicts Value-at-Risk (VaR) and
+    Expected Shortfall (ES) from sequential financial data. The model uses
+    multi-head attention to capture temporal dependencies in the data.
+
+    Architecture:
+    - Input linear layer to project features to model dimension
+    - Positional encoding for sequence awareness
+    - Transformer encoder layers with multi-head attention
+    - Output layer producing VaR and ES predictions
+
+    The model ensures VaR < 0 and ES < VaR through appropriate activation functions.
+
+    Args:
+        input_dim (int): Number of input features
+        model_dim (int): Hidden dimension of the transformer
+        num_heads (int): Number of attention heads
+        num_layers (int): Number of transformer layers
+        dropout (float): Dropout rate for regularization
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        model_dim: int = 32,
+        num_heads: int = 2,
+        num_layers: int = 1,
+        dropout: float = 0.2,
+    ):
         super().__init__()
         self.input_linear = nn.Linear(input_dim, model_dim)
         self.pos_encoder = PositionalEncoding(model_dim)
@@ -357,15 +480,38 @@ class BasicVaRTransformer(nn.Module):
         with torch.no_grad():
             self.output_layer.bias[:] = torch.tensor([-0.5, 0.5])
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the transformer model.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, input_dim)
+
+        Returns:
+            torch.Tensor: Predictions of shape (batch_size, 2) where:
+                - x[:, 0] = VaR predictions (negative values)
+                - x[:, 1] = ES predictions (more negative than VaR)
+        """
+        # Project input to model dimension
         x = self.input_linear(x)
+
+        # Add positional encoding
         x = self.pos_encoder(x)
+
+        # Pass through transformer encoder
         h = self.transformer(x)
+
+        # Use last hidden state for prediction
         h_last = h[:, -1, :]
+
+        # Generate raw predictions
         raw = self.output_layer(h_last)
         a, b = raw[:, 0], raw[:, 1]
-        v = -F.softplus(a)  # v < 0
-        e = v - F.softplus(b)  # e < v
+
+        # Apply constraints: VaR < 0 and ES < VaR
+        v = -F.softplus(a)  # VaR < 0
+        e = v - F.softplus(b)  # ES < VaR
+
         return torch.stack([v, e], dim=1)
 
 
@@ -373,10 +519,31 @@ def train_with_stride(
     X_train: np.ndarray,
     y_train: np.ndarray,
     input_dim: int,
-    alpha=ALPHA,
+    alpha: float = ALPHA,
     seq_len: int = CONTEXT_LEN,
     train_stride: int = TRAIN_STRIDE,
 ) -> BasicVaRTransformer:
+    """
+    Train a transformer model using sliding windows with specified stride.
+
+    Creates sliding windows from training data, splits into train/validation sets,
+    and trains the transformer model with early stopping and learning rate scheduling.
+
+    Args:
+        X_train (np.ndarray): Training features
+        y_train (np.ndarray): Training targets (returns)
+        input_dim (int): Number of input features
+        alpha (float): VaR/ES confidence level
+        seq_len (int): Sequence length for transformer
+        train_stride (int): Stride for creating training windows
+
+    Returns:
+        BasicVaRTransformer: Trained transformer model
+
+    Note:
+        Uses FZ0 loss function for VaR/ES prediction and includes
+        gradient clipping and early stopping for stable training.
+    """
     X_win, y_win = make_windows_with_stride(
         X_train, y_train, seq_len=seq_len, stride=train_stride
     )
@@ -498,17 +665,57 @@ def _scalarize_factor(x, mode="mean"):
 
 
 # ============================
-# Pipeline
+# Main Pipeline
 # ============================
+
+
 def pipeline(
-    csv_path="data/merged_data_with_realised_volatility.csv",
-    alpha=ALPHA,
-    feature_parity=True,
-    calibrate=False,
-    run_tag=None,
-    out_dir="saved_models",
-    fig_dir="figures",
-):
+    csv_path: str = "data/merged_data_with_realised_volatility.csv",
+    alpha: float = ALPHA,
+    feature_parity: bool = True,
+    calibrate: bool = False,
+    run_tag: Optional[str] = None,
+    out_dir: str = "saved_models",
+    fig_dir: str = "figures",
+) -> Tuple[
+    BasicVaRTransformer,
+    Dict[str, Any],
+    Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+]:
+    """
+    Complete pipeline for training and evaluating a transformer model for VaR/ES prediction.
+
+    This is the main entry point for the transformer model. It handles:
+    - Data loading and feature engineering
+    - Model training with sliding windows
+    - Evaluation on test data
+    - Optional online calibration
+    - Statistical backtesting
+    - Results visualization and saving
+
+    Args:
+        csv_path (str): Path to CSV file with price data
+        alpha (float): VaR/ES confidence level (e.g., 0.01 for 1%)
+        feature_parity (bool): If True, use only x_cov feature for fair comparison
+        calibrate (bool): Whether to apply online calibration
+        run_tag (str, optional): Tag for naming output files
+        out_dir (str): Directory for saving models and results
+        fig_dir (str): Directory for saving diagnostic plots
+
+    Returns:
+        Tuple containing:
+        - BasicVaRTransformer: Trained model
+        - Dict: Evaluation metrics and metadata
+        - Tuple: (v_eval, e_eval, y_aligned, fz0) predictions and targets
+
+    Example:
+        model, metrics, (v_eval, e_eval, y_aligned, fz0) = pipeline(
+            csv_path="data.csv",
+            alpha=0.01,
+            feature_parity=True,
+            calibrate=True
+        )
+    """
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(fig_dir, exist_ok=True)
 

@@ -9,4 +9,5 @@ pycache/
 __pycache__/
 preprocess/
 saved_models/
+models/
 .DS_Store

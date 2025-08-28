@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-Standalone Transformer Model for VaR/ES Prediction (Class-based)
+Standalone Transformer Model for VaR/ES Prediction
 
-This minimal script expects your project layout to have:
-  src/
-    models/transformer_var_es_paper_exact.py
-    utils/eval_tools.py
+A comprehensive class-based interface for training transformer models and making
+VaR/ES predictions with automatic calibration and persistence.
+
+Features:
+- Full dataset training (no train/test split)
+- Online calibration for improved accuracy
+- Model persistence and reuse
+- Live prediction mode
+- Comprehensive backtesting
 
 Usage:
-    python standalone_transformer_class.py --csv your_data.csv --alpha 0.01
+    python standalone_transformer_class.py --csv your_data.csv --alpha 0.01 --live_mode
 """
 
 import sys
@@ -23,10 +28,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-# Add src to path so `models` and `utils` are importable
+# Add src to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
-# --- Import from your library code (assumed already fixed for 1-step alignment) ---
+# Import transformer model components
 from models.transformer_var_es_paper_exact import (
     build_inputs_from_prices,
     split_and_make_features,
@@ -36,7 +41,7 @@ from models.transformer_var_es_paper_exact import (
     CONTEXT_LEN,
     TRAIN_STRIDE,
     ALPHA,
-    rolling_online_factors,  # use the same calibration helper as your main lib
+    rolling_online_factors,
 )
 
 from utils.eval_tools import (
@@ -50,7 +55,27 @@ from utils.eval_tools import (
 
 
 class StandalonePredictor:
-    """Standalone Transformer Predictor for VaR/ES Prediction."""
+    """
+    Standalone Transformer Predictor for VaR/ES Prediction.
+
+    A comprehensive class for training transformer models and making predictions
+    with automatic calibration, persistence, and live prediction capabilities.
+
+    Attributes:
+        csv_path (str): Path to the CSV file containing price data
+        alpha (float): VaR/ES confidence level (e.g., 0.01 for 1%)
+        feature_parity (bool): Whether to use feature parity mode (x_cov only)
+        train_frac (float): Training fraction (1.0 for full dataset training)
+        model_dir (str): Directory to save/load models
+        output_dir (str): Directory for output files and logs
+        model: The trained transformer model
+        df: Processed DataFrame with features
+        data_hash (str): Hash of data for model naming
+        feature_cols (list): List of feature column names
+        last_training_date: Timestamp of last training
+        calibration_factors (dict): Current calibration factors
+        meta (dict): Training metadata (scaling, features, etc.)
+    """
 
     def __init__(
         self,
@@ -68,22 +93,29 @@ class StandalonePredictor:
         self.model_dir = model_dir
         self.output_dir = output_dir
 
-        # Model and data state
+        # Initialize model and data state
         self.model = None
         self.df = None
         self.data_hash = None
         self.feature_cols = None
         self.last_training_date = None
         self.calibration_factors = {"c_v": 1.0, "c_e": 1.0}
-        self.meta = None  # persist training meta (mu_train, feature_cols, scaler stats)
+        self.meta = None
 
-        # Load last training date if it exists
+        # Load previous training information if available
         self.load_training_info()
 
-    # --------------------
-    # Persistence helpers
-    # --------------------
+    # ============================
+    # Persistence and Metadata
+    # ============================
+
     def load_training_info(self):
+        """
+        Load previous training information from saved metadata.
+
+        Loads the last training date and model path from the output directory.
+        This enables model reuse and calibration mode functionality.
+        """
         try:
             training_info_file = os.path.join(
                 self.output_dir, "last_training_info.json"
@@ -94,7 +126,7 @@ class StandalonePredictor:
                 self.last_training_date = datetime.fromisoformat(
                     info["last_training_date"]
                 )
-                self.last_model_path = info.get("model_path")  # <-- NEW
+                self.last_model_path = info.get("model_path")
                 print(
                     f"✓ Loaded last training date: {self.last_training_date.strftime('%Y-%m-%d')}"
                 )
@@ -140,10 +172,23 @@ class StandalonePredictor:
         print(f"Model loaded from: {model_path}")
         return model
 
-    # --------------------
-    # Data & feature prep
-    # --------------------
+    # ============================
+    # Data Loading and Processing
+    # ============================
+
     def load_and_prepare_data(self):
+        """
+        Load and prepare data from CSV file.
+
+        Loads price data, validates required columns, and processes features.
+        Automatically handles case-insensitive column names and data validation.
+
+        Returns:
+            pd.DataFrame: Processed DataFrame with engineered features
+
+        Raises:
+            ValueError: If 'close' column is missing
+        """
         print(f"Loading data from: {self.csv_path}")
         df = pd.read_csv(self.csv_path)
 
@@ -175,8 +220,18 @@ class StandalonePredictor:
 
     @staticmethod
     def compute_data_hash(df):
-        # Simple content-derived hash for model naming
-        # (Assumes 'close' exists; build_inputs keeps it.)
+        """
+        Compute a hash of the data for model naming.
+
+        Creates a unique identifier based on data length and price characteristics
+        to ensure model files are properly named and can be reused.
+
+        Args:
+            df (pd.DataFrame): DataFrame with 'close' column
+
+        Returns:
+            str: 8-character hexadecimal hash
+        """
         hash_input = f"{len(df)}_{df['close'].iloc[-10:].sum():.2f}_{df['close'].iloc[:10].sum():.2f}"
         return hashlib.md5(hash_input.encode()).hexdigest()[:8]
 
@@ -209,16 +264,37 @@ class StandalonePredictor:
         X_std = (X - mean) / scale_safe
         return X_std
 
-    # ---------------
-    # Model training
-    # ---------------
+    # ============================
+    # Model Training and Loading
+    # ============================
     def get_model_filename(self):
+        """
+        Generate filename for model persistence.
+
+        Creates a unique filename based on model parameters and data hash
+        to ensure proper model versioning and reuse.
+
+        Returns:
+            str: Model filename with parameter encoding
+        """
         feat_suffix = "parity" if self.feature_parity else "full"
         train_suffix = f"train{int(self.train_frac*100)}"
         alpha_suffix = f"a{int(self.alpha*1000):03d}"
         return f"transformer_{alpha_suffix}_{feat_suffix}_{train_suffix}_{self.data_hash}.pth"
 
     def train_model(self, force_retrain=False):
+        """
+        Train or load a transformer model.
+
+        Either loads an existing model from disk or trains a new one.
+        Automatically handles model persistence and metadata management.
+
+        Args:
+            force_retrain (bool): If True, ignore existing models and retrain
+
+        Returns:
+            BasicVaRTransformer: The trained/loaded model
+        """
         print("\n" + "=" * 50)
         print("MODEL TRAINING/LOADING")
         print("=" * 50)
@@ -242,6 +318,7 @@ class StandalonePredictor:
             model = BasicVaRTransformer(input_dim=len(self.feature_cols))
             model.load_state_dict(torch.load(model_path, map_location="cpu"))
             print("Model loaded successfully!")
+            self.model = model  # Assign to self.model
             return model
 
         # Train new model
@@ -265,12 +342,25 @@ class StandalonePredictor:
         print(f"Model saved to: {model_path}")
         print(f"Meta  saved to: {meta_path}")
         print("Training completed!")
+        self.model = model  # Assign to self.model
         return model
 
-    # ---------------
-    # Evaluation mode
-    # ---------------
+    # ============================
+    # Model Evaluation
+    # ============================
     def evaluate_model(self, calibrate=False):
+        """
+        Evaluate model performance on test data.
+
+        Performs comprehensive backtesting with statistical tests including
+        Kupiec test, Christoffersen independence test, and FZ0 loss calculation.
+
+        Args:
+            calibrate (bool): Whether to apply online calibration
+
+        Returns:
+            dict: Dictionary containing evaluation metrics and predictions
+        """
         print("\n" + "=" * 50)
         print("EVALUATING MODEL")
         print("=" * 50)
@@ -281,7 +371,7 @@ class StandalonePredictor:
         split_idx = len(X_train)
 
         v_pred, e_pred = evaluate_with_sliding_batch(
-            self.model, X_all, y_all, split_idx, CONTEXT_LEN, 64
+            self.model, X_all, y_all, split_idx, CONTEXT_LEN, 32
         )
 
         # Align predictions with actual returns (1-step labels)
@@ -330,10 +420,20 @@ class StandalonePredictor:
             "y_true": y_aligned,
         }
 
-    # -------------------
-    # Inference utilities
-    # -------------------
+    # ============================
+    # Live Prediction and Calibration
+    # ============================
+
     def predict_next_day(self):
+        """
+        Make prediction for the next trading day.
+
+        Uses the most recent data window to predict VaR and ES for tomorrow.
+        Applies current calibration factors and provides risk level assessment.
+
+        Returns:
+            dict: Dictionary with VaR, ES predictions and risk level
+        """
         print("\n" + "=" * 50)
         print("NEXT DAY PREDICTION")
         print("=" * 50)
@@ -373,7 +473,18 @@ class StandalonePredictor:
         return {"var": var_calibrated, "es": es_calibrated, "risk_level": risk_level}
 
     def update_calibration_factors(self, calibration_window=3000):
-        """Update calibration factors using recent history (causal, 1-step aligned)."""
+        """
+        Update calibration factors using recent history.
+
+        Computes rolling online calibration factors using the most recent data
+        to improve prediction accuracy. Uses causal, 1-step aligned windows.
+
+        Args:
+            calibration_window (int): Number of recent observations to use
+
+        Returns:
+            float: Time taken for calibration update
+        """
         print("Updating calibration factors...")
         start_time = time.time()
 
@@ -426,7 +537,15 @@ class StandalonePredictor:
         return calibration_time
 
     def make_live_prediction(self):
-        """Make prediction for tomorrow using the model and current calibration factors."""
+        """
+        Make prediction for tomorrow using current model and calibration factors.
+
+        Uses the most recent data window to predict VaR and ES for the next trading day.
+        Applies current calibration factors for improved accuracy.
+
+        Returns:
+            dict: Dictionary with raw and calibrated predictions
+        """
         print("Making prediction for tomorrow...")
         # dfp = build_inputs_from_prices(self.df)
         dfp = self.df
@@ -453,10 +572,21 @@ class StandalonePredictor:
             "es_pct": es_calibrated * 100,
         }
 
-    # --------------
-    # Live mode flow
-    # --------------
+    # ============================
+    # Live Mode and Results Display
+    # ============================
     def display_live_results(self, results, mode, processing_time):
+        """
+        Display live prediction results in a formatted output.
+
+        Shows VaR/ES predictions, risk level assessment, and interpretation
+        of the results for easy understanding.
+
+        Args:
+            results (dict): Prediction results from make_live_prediction
+            mode (str): Operating mode (retrain/calibrate/auto)
+            processing_time (float): Time taken for processing
+        """
         print("\n" + "=" * 60)
         print("TOMORROW'S RISK PREDICTION")
         print("=" * 60)
@@ -487,6 +617,20 @@ class StandalonePredictor:
         print(f"Processing Time: {processing_time:.2f} seconds")
 
     def save_live_results(self, results, mode, processing_time):
+        """
+        Save live prediction results to file.
+
+        Creates a timestamped JSON file with all prediction details
+        for record keeping and analysis.
+
+        Args:
+            results (dict): Prediction results from make_live_prediction
+            mode (str): Operating mode
+            processing_time (float): Time taken for processing
+
+        Returns:
+            str: Path to the saved prediction file
+        """
         os.makedirs(self.output_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         prediction_file = os.path.join(self.output_dir, f"prediction_{timestamp}.json")
@@ -504,6 +648,16 @@ class StandalonePredictor:
         return prediction_file
 
     def should_retrain(self, retrain_days, mode):
+        """
+        Determine if model should be retrained based on mode and timing.
+
+        Args:
+            retrain_days (int): Days between auto-retraining
+            mode (str): Operating mode (retrain/calibrate/auto)
+
+        Returns:
+            bool: True if model should be retrained
+        """
         if mode == "retrain":
             return True
         if mode == "calibrate":
@@ -518,6 +672,24 @@ class StandalonePredictor:
     def run_live_mode(
         self, mode="auto", retrain_days=7, calibration_window=100, live_train_frac=1.0
     ):
+        """
+        Run live prediction mode with automatic retraining and calibration.
+
+        This is the main method for production use. It handles:
+        - Automatic model retraining based on schedule
+        - Online calibration for improved accuracy
+        - Live prediction for the next trading day
+        - Results display and persistence
+
+        Args:
+            mode (str): Operating mode ('retrain', 'calibrate', or 'auto')
+            retrain_days (int): Days between auto-retraining
+            calibration_window (int): Observations for calibration
+            live_train_frac (float): Training fraction (1.0 for full dataset)
+
+        Returns:
+            dict: Prediction results for tomorrow
+        """
         print("=" * 60)
         print("HYBRID LIVE PREDICTION MODE")
         print("=" * 60)
@@ -529,7 +701,7 @@ class StandalonePredictor:
             self.train_frac = live_train_frac
             print(f"[LIVE] Overriding train_frac to {self.train_frac}.")
 
-            self.model = self.train_model(force_retrain=True)
+            self.train_model(force_retrain=True)
 
             # persist the exact model path we just wrote
             model_filename = self.get_model_filename()
@@ -564,9 +736,7 @@ class StandalonePredictor:
 
                 if os.path.exists(model_path):
                     print(f"Found current model: {model_path}")
-                    self.model = self.train_model(
-                        force_retrain=False
-                    )  # loads by current name
+                    self.train_model(force_retrain=False)  # loads by current name
                 else:
                     print(
                         "❌ No trained model found. Please run with mode='retrain' first."
@@ -587,8 +757,22 @@ class StandalonePredictor:
     def run_standard_mode(
         self, calibrate=False, predict_next=False, save_results=False
     ):
+        """
+        Run standard evaluation mode for backtesting and analysis.
+
+        Performs train/test split evaluation with optional calibration
+        and next-day prediction. Useful for model development and testing.
+
+        Args:
+            calibrate (bool): Whether to apply online calibration
+            predict_next (bool): Whether to make next-day prediction
+            save_results (bool): Whether to save results (placeholder)
+
+        Returns:
+            dict: Evaluation results and metrics
+        """
         self.load_and_prepare_data()
-        self.model = self.train_model(force_retrain=False)
+        self.train_model(force_retrain=False)
         results = self.evaluate_model(calibrate=calibrate)
         if predict_next:
             _ = self.predict_next_day()
@@ -601,6 +785,12 @@ class StandalonePredictor:
 
 
 def list_available_models(model_dir):
+    """
+    List all available trained models in the specified directory.
+
+    Args:
+        model_dir (str): Directory containing model files
+    """
     if not os.path.exists(model_dir):
         print(f"No model directory found: {model_dir}")
         return
@@ -614,6 +804,12 @@ def list_available_models(model_dir):
 
 
 def main():
+    """
+    Main entry point for the standalone transformer predictor.
+
+    Handles command-line argument parsing and orchestrates the prediction workflow.
+    Supports both live prediction mode and standard evaluation mode.
+    """
     parser = argparse.ArgumentParser(
         description="Standalone Transformer Model for VaR/ES prediction"
     )
@@ -653,7 +849,7 @@ def main():
     parser.add_argument(
         "--calibrate", action="store_true", help="Apply calibration during evaluation"
     )
-    # Live
+    # Live prediction mode arguments
     parser.add_argument(
         "--live_mode", action="store_true", help="Enable live prediction mode"
     )

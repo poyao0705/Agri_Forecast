@@ -1,23 +1,75 @@
-# eval_tools.py
+#!/usr/bin/env python3
+"""
+Evaluation Tools for VaR/ES Prediction
+
+A comprehensive collection of tools for evaluating Value-at-Risk (VaR) and
+Expected Shortfall (ES) predictions using statistical backtesting methods.
+
+This module provides:
+- FZ0 loss function for VaR/ES evaluation
+- Statistical backtesting tests (Kupiec, Christoffersen)
+- Calibration utilities for improving predictions
+- Diagnostic plotting functions
+- Online calibration factors computation
+
+Key Features:
+- FZ0 loss function (Patton 2019) for proper scoring
+- Unconditional coverage test (Kupiec)
+- Independence test (Christoffersen)
+- Conditional coverage test
+- Rolling online calibration
+- Diagnostic visualization
+
+Usage:
+    from eval_tools import fz0_per_step, kupiec_pof, christoffersen_independence
+    
+    # Calculate FZ0 loss
+    loss = fz0_per_step(y_true, v_pred, e_pred, alpha=0.01)
+    
+    # Perform statistical tests
+    LR, p_val, x, n = kupiec_pof(hits, alpha=0.01)
+    LR_ind, p_ind = christoffersen_independence(hits)
+"""
+
 import os
 import numpy as np
 import pandas as pd
 from scipy.stats import chi2, norm
+from typing import Tuple, List, Optional, Union
 
-# Headless-safe matplotlib
+# Headless-safe matplotlib for server environments
 import matplotlib
-
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-# -----------------------------
-# FZ0 loss & calibration utils
-# -----------------------------
-def fz0_per_step(y, v, e, alpha):
+# ============================
+# FZ0 Loss Function and Calibration
+# ============================
+
+def fz0_per_step(y: Union[np.ndarray, List[float]], 
+                 v: Union[np.ndarray, List[float]], 
+                 e: Union[np.ndarray, List[float]], 
+                 alpha: float) -> np.ndarray:
     """
-    FZ0 (Patton 2019) for lower tail. Enforces ES <= VaR and ES < 0.
-    Returns a scalar score (lower is better).
+    FZ0 loss function (Patton 2019) for VaR/ES evaluation.
+    
+    The FZ0 loss is a proper scoring rule for VaR and ES predictions that
+    penalizes both coverage violations and the magnitude of losses beyond VaR.
+    It enforces the constraints ES <= VaR and ES < 0.
+    
+    Args:
+        y (Union[np.ndarray, List[float]]): True returns
+        v (Union[np.ndarray, List[float]]): VaR predictions (should be negative)
+        e (Union[np.ndarray, List[float]]): ES predictions (should be < VaR)
+        alpha (float): VaR/ES confidence level (e.g., 0.01 for 1%)
+        
+    Returns:
+        np.ndarray: FZ0 loss values (lower is better)
+        
+    Note:
+        The FZ0 loss is a proper scoring rule, meaning it is minimized when
+        predictions are equal to the true conditional quantiles and expectations.
     """
     y = np.asarray(y, float)
     v = np.asarray(v, float)
@@ -30,8 +82,30 @@ def fz0_per_step(y, v, e, alpha):
     return term1 + term2
 
 
-def exact_var_factor(y_train, v_train, alpha, lo=0.2, hi=5.0, iters=40):
-    """Find c so that mean( y <= c * v ) == alpha (bisection)."""
+def exact_var_factor(y_train: Union[np.ndarray, List[float]], 
+                     v_train: Union[np.ndarray, List[float]], 
+                     alpha: float, 
+                     lo: float = 0.2, 
+                     hi: float = 5.0, 
+                     iters: int = 40) -> float:
+    """
+    Find exact VaR calibration factor using bisection method.
+    
+    Finds the factor c such that mean(y <= c * v) == alpha, where
+    y are true returns and v are VaR predictions. Uses bisection
+    to efficiently find the optimal scaling factor.
+    
+    Args:
+        y_train (Union[np.ndarray, List[float]]): Training returns
+        v_train (Union[np.ndarray, List[float]]): Training VaR predictions
+        alpha (float): Target VaR confidence level
+        lo (float): Lower bound for bisection search
+        hi (float): Upper bound for bisection search
+        iters (int): Maximum number of bisection iterations
+        
+    Returns:
+        float: Calibration factor c such that hit rate = alpha
+    """
     y = np.asarray(y_train, float)
     v = np.asarray(v_train, float)
     lo, hi = float(lo), float(hi)
@@ -45,8 +119,29 @@ def exact_var_factor(y_train, v_train, alpha, lo=0.2, hi=5.0, iters=40):
     return 0.5 * (lo + hi)
 
 
-def exact_es_factor(y_train, v_train, e_train, alpha):
-    """Scale ES so that mean(y | y<=v) equals mean(e | hits) on train."""
+def exact_es_factor(y_train: Union[np.ndarray, List[float]], 
+                   v_train: Union[np.ndarray, List[float]], 
+                   e_train: Union[np.ndarray, List[float]], 
+                   alpha: float) -> float:
+    """
+    Find exact ES calibration factor.
+    
+    Scales ES predictions so that the mean of true returns given VaR violations
+    equals the mean of ES predictions given VaR violations on training data.
+    
+    Args:
+        y_train (Union[np.ndarray, List[float]]): Training returns
+        v_train (Union[np.ndarray, List[float]]): Training VaR predictions
+        e_train (Union[np.ndarray, List[float]]): Training ES predictions
+        alpha (float): VaR confidence level
+        
+    Returns:
+        float: Calibration factor for ES predictions
+        
+    Note:
+        This ensures that ES predictions are properly calibrated to match
+        the true conditional expectation of returns given VaR violations.
+    """
     y = np.asarray(y_train, float)
     v = np.asarray(v_train, float)
     e = np.asarray(e_train, float)
@@ -60,13 +155,28 @@ def exact_es_factor(y_train, v_train, e_train, alpha):
     return target / pred
 
 
-# -----------------------------
-# Backtesting helpers (legacy: return LR and p)
-# -----------------------------
-def kupiec_pof(hits, alpha):
+# ============================
+# Statistical Backtesting Tests
+# ============================
+
+def kupiec_pof(hits: Union[np.ndarray, List[int]], 
+               alpha: float) -> Tuple[float, float, int, int]:
     """
-    Unconditional coverage (Kupiec) LR test.
-    Returns (LR_pof, p_value, x, n).
+    Kupiec test for unconditional coverage (proportion of failures).
+    
+    Tests whether the proportion of VaR violations equals the expected
+    proportion alpha. The null hypothesis is that the hit rate equals alpha.
+    
+    Args:
+        hits (Union[np.ndarray, List[int]]): Binary sequence of VaR violations (1 = violation, 0 = no violation)
+        alpha (float): Expected VaR violation rate (e.g., 0.01 for 1% VaR)
+        
+    Returns:
+        Tuple[float, float, int, int]: (LR_statistic, p_value, violations_count, total_observations)
+        
+    Note:
+        The test statistic follows a chi-squared distribution with 1 degree of freedom
+        under the null hypothesis. Low p-values indicate rejection of the null.
     """
     h = np.asarray(hits).astype(int)
     n = len(h)
@@ -84,10 +194,23 @@ def kupiec_pof(hits, alpha):
     return LR, p, x, n
 
 
-def christoffersen_independence(hits):
+def christoffersen_independence(hits: Union[np.ndarray, List[int]]) -> Tuple[float, float]:
     """
-    Christoffersen independence test (Markov).
-    Returns (LR_ind, p_value).
+    Christoffersen independence test for VaR violations.
+    
+    Tests whether VaR violations are independent over time using a Markov chain
+    approach. The null hypothesis is that violations are independent.
+    
+    Args:
+        hits (Union[np.ndarray, List[int]]): Binary sequence of VaR violations (1 = violation, 0 = no violation)
+        
+    Returns:
+        Tuple[float, float]: (LR_statistic, p_value)
+        
+    Note:
+        The test examines whether the probability of a violation depends on
+        whether there was a violation in the previous period. The test statistic
+        follows a chi-squared distribution with 1 degree of freedom.
     """
     h = np.asarray(hits).astype(int)
     if len(h) < 2:
@@ -121,10 +244,26 @@ def christoffersen_independence(hits):
     return LR, p
 
 
-def christoffersen_cc(hits, alpha):
+def christoffersen_cc(hits: Union[np.ndarray, List[int]], 
+                     alpha: float) -> Tuple[float, float]:
     """
-    Conditional coverage = Kupiec + Independence.
-    Returns (LR_cc, p_value).
+    Christoffersen conditional coverage test.
+    
+    Combines the Kupiec test (unconditional coverage) and Christoffersen
+    independence test into a single test for conditional coverage.
+    The null hypothesis is that violations have the correct probability
+    and are independent over time.
+    
+    Args:
+        hits (Union[np.ndarray, List[int]]): Binary sequence of VaR violations
+        alpha (float): Expected VaR violation rate
+        
+    Returns:
+        Tuple[float, float]: (LR_statistic, p_value)
+        
+    Note:
+        The test statistic is the sum of Kupiec and Independence test statistics
+        and follows a chi-squared distribution with 2 degrees of freedom.
     """
     LR_pof, _, _, _ = kupiec_pof(hits, alpha)
     LR_ind, _ = christoffersen_independence(hits)
@@ -167,10 +306,26 @@ def christoffersen_cc_p(alpha_or_hits, hits_or_alpha=None):
     return p
 
 
-# -----------------------------
-# Diebold–Mariano
-# -----------------------------
-def newey_west_variance(d, lag=5):
+# ============================
+# Diebold-Mariano Test
+# ============================
+
+def newey_west_variance(d: Union[np.ndarray, List[float]], 
+                       lag: int = 5) -> float:
+    """
+    Compute Newey-West variance estimator for time series data.
+    
+    Estimates the variance of a time series accounting for autocorrelation
+    using the Newey-West HAC (Heteroskedasticity and Autocorrelation Consistent)
+    estimator.
+    
+    Args:
+        d (Union[np.ndarray, List[float]]): Time series data
+        lag (int): Maximum lag for autocorrelation adjustment
+        
+    Returns:
+        float: Newey-West variance estimate
+    """
     d = np.asarray(d, float)
     n = len(d)
     mu = d.mean()
@@ -184,7 +339,27 @@ def newey_west_variance(d, lag=5):
     return var
 
 
-def diebold_mariano(loss1, loss2, lag=1):
+def diebold_mariano(loss1: Union[np.ndarray, List[float]], 
+                   loss2: Union[np.ndarray, List[float]], 
+                   lag: int = 1) -> Tuple[float, float]:
+    """
+    Diebold-Mariano test for comparing forecast accuracy.
+    
+    Tests whether two forecasting models have significantly different
+    predictive accuracy using the Diebold-Mariano test statistic.
+    
+    Args:
+        loss1 (Union[np.ndarray, List[float]]): Loss values from model 1
+        loss2 (Union[np.ndarray, List[float]]): Loss values from model 2
+        lag (int): Maximum lag for Newey-West variance estimation
+        
+    Returns:
+        Tuple[float, float]: (DM_statistic, p_value)
+        
+    Note:
+        The null hypothesis is that both models have equal predictive accuracy.
+        The test uses Newey-West variance estimation to account for autocorrelation.
+    """
     l1 = np.asarray(loss1, float)
     l2 = np.asarray(loss2, float)
     m = min(len(l1), len(l2))
@@ -198,19 +373,39 @@ def diebold_mariano(loss1, loss2, lag=1):
     return dm, p
 
 
-# -----------------------------
-# Plotting helpers
-# -----------------------------
+# ============================
+# Diagnostic Plotting
+# ============================
+
 def plot_var_es_diagnostics(
-    y_true, var_pred, es_pred, alpha, title, out_dir, fname_prefix
-):
+    y_true: Union[np.ndarray, List[float]],
+    var_pred: Union[np.ndarray, List[float]],
+    es_pred: Union[np.ndarray, List[float]],
+    alpha: float,
+    title: str,
+    out_dir: str,
+    fname_prefix: str
+) -> str:
     """
-    Save a 2x2 diagnostic figure:
-      (1) VaR backtest with breaches
-      (2) Rolling hit rate (window auto)
-      (3) Tail Q–Q of breach returns
-      (4) ES vs Actual on breaches (with y=x)
-    Returns the filepath of the saved PNG.
+    Create comprehensive diagnostic plots for VaR/ES evaluation.
+    
+    Generates a 2x2 diagnostic figure with:
+    - VaR backtest with breach indicators
+    - Rolling hit rate with automatic window selection
+    - Tail Q-Q plot of breach returns
+    - ES vs Actual comparison on breaches
+    
+    Args:
+        y_true (Union[np.ndarray, List[float]]): True returns
+        var_pred (Union[np.ndarray, List[float]]): VaR predictions
+        es_pred (Union[np.ndarray, List[float]]): ES predictions
+        alpha (float): VaR confidence level
+        title (str): Plot title
+        out_dir (str): Output directory for saving
+        fname_prefix (str): Filename prefix
+        
+    Returns:
+        str: Filepath of the saved PNG file
     """
     os.makedirs(out_dir, exist_ok=True)
     y_true = np.asarray(y_true)
@@ -288,33 +483,80 @@ def plot_var_es_diagnostics(
     return out_png
 
 
-def _safe_mean(x):
+def _safe_mean(x: Union[np.ndarray, List[float]]) -> float:
+    """
+    Safely compute mean of array, returning NaN if empty.
+    
+    Args:
+        x (Union[np.ndarray, List[float]]): Input array
+        
+    Returns:
+        float: Mean value or NaN if array is empty
+    """
     return float(np.mean(x)) if len(x) else float("nan")
 
 
-def _pct(x, q):
+def _pct(x: Union[np.ndarray, List[float]], q: float) -> float:
+    """
+    Safely compute quantile of array, returning NaN if empty.
+    
+    Args:
+        x (Union[np.ndarray, List[float]]): Input array
+        q (float): Quantile (0-1)
+        
+    Returns:
+        float: Quantile value or NaN if array is empty
+    """
     if len(x) == 0:
         return float("nan")
     return float(np.quantile(x, q))
 
 
-def _choose_window_for_alpha(alpha, n, target_exceedances=30, min_w=200):
+def _choose_window_for_alpha(alpha: float, n: int, target_exceedances: int = 30, 
+                           min_w: int = 200) -> int:
     """
-    Pick a rolling window so the expected #exceedances ≈ target_exceedances.
-    W ≈ target_exceedances / α, clipped to [min_w, n].
+    Choose rolling window size for target number of exceedances.
+    
+    Selects a window size W such that the expected number of exceedances
+    is approximately target_exceedances. W ≈ target_exceedances / α.
+    
+    Args:
+        alpha (float): VaR confidence level
+        n (int): Total number of observations
+        target_exceedances (int): Target number of exceedances in window
+        min_w (int): Minimum window size
+        
+    Returns:
+        int: Optimal window size clipped to [min_w, n]
     """
     W = int(np.ceil(target_exceedances / max(alpha, 1e-12)))
     return int(np.clip(W, min_w, n))
 
 
-def print_online_drift(y, v, e, c_v, c_e, alpha, label="ONLINE"):
+def print_online_drift(y: Union[np.ndarray, List[float]], 
+                      v: Union[np.ndarray, List[float]], 
+                      e: Union[np.ndarray, List[float]], 
+                      c_v: Union[np.ndarray, List[float], float], 
+                      c_e: Union[np.ndarray, List[float], float], 
+                      alpha: float, 
+                      label: str = "ONLINE") -> None:
     """
-    Online diagnostics of hit-rate drift and ES coherence.
-    y : realized returns/aligned targets (1D)
-    v : calibrated VaR_t (1D)
-    e : calibrated ES_t   (1D)
-    c_v, c_e : factors used at time t (can be scalars or arrays same length as y)
-    alpha : nominal exceedance level
+    Print comprehensive online diagnostics for VaR/ES predictions.
+    
+    Provides detailed analysis of:
+    - Hit rate drift across different time periods
+    - Rolling hit rate statistics
+    - ES coherence and calibration
+    - Calibration factor drift over time
+    
+    Args:
+        y (Union[np.ndarray, List[float]]): Realized returns/aligned targets
+        v (Union[np.ndarray, List[float]]): Calibrated VaR predictions
+        e (Union[np.ndarray, List[float]]): Calibrated ES predictions
+        c_v (Union[np.ndarray, List[float], float]): VaR calibration factors
+        c_e (Union[np.ndarray, List[float], float]): ES calibration factors
+        alpha (float): Nominal VaR exceedance level
+        label (str): Label for output identification
     """
     y = np.asarray(y)
     v = np.asarray(v)
